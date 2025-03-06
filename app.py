@@ -28,21 +28,34 @@ SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/au
 CREDS_JSON = os.getenv("GOOGLE_SHEETS_CREDS")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
-# Debug environment variables
-logger.info(f"GOOGLE_SHEETS_CREDS length: {len(CREDS_JSON) if CREDS_JSON else 0}")
-logger.info(f"SPREADSHEET_ID: {SPREADSHEET_ID}")
+# Debug all environment variables
+logger.info("All environment variables:")
+for key, value in os.environ.items():
+    logger.info(f"{key}: {'set' if value else 'not set'} (length: {len(value) if value else 0})")
+logger.info(f"GOOGLE_SHEETS_CREDS: {'set' if CREDS_JSON else 'not set'} (length: {len(CREDS_JSON) if CREDS_JSON else 0})")
+logger.info(f"SPREADSHEET_ID: {'set' if SPREADSHEET_ID else 'not set'}")
+logger.info(f"SERP_API_KEY: {'set' if os.getenv('SERP_API_KEY') else 'not set'}")
 
 if not CREDS_JSON or not SPREADSHEET_ID:
-    logger.error("Missing environment variables!")
-    raise ValueError("❌ ERROR: GOOGLE_SHEETS_CREDS or SPREADSHEET_ID environment variable is not set!")
+    missing_vars = []
+    if not CREDS_JSON:
+        missing_vars.append("GOOGLE_SHEETS_CREDS")
+    if not SPREADSHEET_ID:
+        missing_vars.append("SPREADSHEET_ID")
+    error_msg = f"❌ ERROR: Missing environment variables: {', '.join(missing_vars)}"
+    logger.error(error_msg)
+    raise ValueError(error_msg)
 
 def get_sheets_client():
     try:
-        creds_dict = json.loads(CREDS_JSON)  # Parse only when needed
+        cleaned_creds = CREDS_JSON.strip()
+        logger.info(f"Raw GOOGLE_SHEETS_CREDS: {repr(cleaned_creds)}")
+        creds_dict = json.loads(cleaned_creds)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
         return gspread.authorize(creds)
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in GOOGLE_SHEETS_CREDS: {e}")
+        logger.error(f"Full CREDS_JSON: {repr(CREDS_JSON)}")
         raise ValueError(f"❌ ERROR: GOOGLE_SHEETS_CREDS is not valid JSON: {CREDS_JSON[:50]}...")
     except Exception as e:
         logger.error(f"Error creating Sheets client: {e}")
