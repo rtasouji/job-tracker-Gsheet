@@ -1,0 +1,86 @@
+name: Run Streamlit Job Daily
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Runs every day at 6 AM UTC
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          echo "📦 Installing dependencies..."
+          pip install -r requirements.txt
+
+      - name: Debug Environment Variables
+        run: |
+          echo "🔍 Debugging Environment Variables..."
+          echo "GOOGLE_SHEETS_CREDS is set: ${{ secrets.GOOGLE_SHEETS_CREDS != '' }}"
+          echo "SPREADSHEET_ID is set: ${{ secrets.SPREADSHEET_ID != '' }}"
+          echo "SERP_API_KEY is set: ${{ secrets.SERP_API_KEY != '' }}"
+
+      - name: Get all campaign names from Google Sheets
+        id: get_campaigns
+        env:
+          GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          python -c """
+          import gspread
+          from oauth2client.service_account import ServiceAccountCredentials
+          import json
+          import os
+          scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+          creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.getenv('GOOGLE_SHEETS_CREDS')), scope)
+          client = gspread.authorize(creds)
+          sheet = client.open_by_key(os.getenv('SPREADSHEET_ID')).worksheet('campaigns')
+          campaigns = [row['campaign_name'] for row in sheet.get_all_records()]
+          print(f'::set-output name=campaigns::{','.join(campaigns)}')
+          """
+
+      - name: Run the script for each campaign
+        env:
+          GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
+        run: |
+          echo "🚀 Running app.py for all campaigns..."
+          for campaign in ${{ steps.get_campaigns.outputs.campaigns }}; do
+            echo "Processing campaign: $campaign"
+            python app.py github "$campaign"
+            echo "✅ Script execution completed for campaign $campaign"
+          done
+
+      - name: Check for data in Google Sheets for each campaign
+        env:
+          GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          echo "🔍 Checking if data was stored for all campaigns..."
+          for campaign in ${{ steps.get_campaigns.outputs.campaigns }}; do
+            echo "Checking campaign: $campaign"
+            python check_db.py "$campaign"
+          done
+
+      - name: Capture Logs
+        run: |
+          echo "Checking for logs.txt in $(pwd)"
+          ls -l
+          cat logs.txt || echo "⚠️ No logs captured."
+
+      - name: Upload logs as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: logs
+          path: logs.txt
+          if-no-files-found: ignore
