@@ -1,0 +1,7 @@
+streamlit
+requests
+pandas
+tldextract
+gspread
+oauth2client
+plotly
