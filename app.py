@@ -73,7 +73,6 @@ def initialize_sheets():
         logger.error(f"Error initializing Sheets: {e}")
         raise
 
-# Load jobs from Google Sheets
 def load_jobs(campaign_name):
     try:
         client = get_sheets_client()
@@ -98,7 +97,6 @@ def load_jobs(campaign_name):
         logger.error(f"Error in load_jobs for campaign '{campaign_name}': {e}")
         return []
 
-# Fetch Google Jobs Results from SerpAPI
 def get_google_jobs_results(query, location):
     try:
         logger.info(f"Fetching results for query: '{query}' in location: '{location}'")
@@ -122,7 +120,6 @@ def get_google_jobs_results(query, location):
         logger.error(f"SerpAPI request failed: {e}")
         return []
 
-# Compute Share of Voice
 def compute_sov(campaign_name):
     logger.info(f"Starting compute_sov for campaign '{campaign_name}'")
     domain_sov = defaultdict(float)
@@ -153,7 +150,7 @@ def compute_sov(campaign_name):
                     domain_v_rank[domain].append(job_rank)
                     domain_h_rank[domain].append(link_order)
                     total_sov += weight
-        time.sleep(1)  # Throttle SerpAPI requests
+        time.sleep(1)
 
     if total_sov > 0:
         domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
@@ -164,13 +161,11 @@ def compute_sov(campaign_name):
     logger.info(f"Computed SoV for '{campaign_name}': {len(domain_sov)} domains")
     return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank
 
-# Extract Domain from URL
 def extract_domain(url):
     extracted = tldextract.extract(url)
     domain = f"{extracted.domain}.{extracted.suffix}" if extracted.suffix else extracted.domain
     return domain.lower().replace("www.", "")
 
-# Save data to Google Sheets
 def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name):
     if not sov_data:
         logger.warning(f"No SoV data to save for campaign '{campaign_name}'")
@@ -188,7 +183,6 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name):
     except Exception as e:
         logger.error(f"Error saving to Google Sheets for campaign '{campaign_name}': {e}")
 
-# Retrieve historical data
 def get_historical_data(start_date, end_date, campaign_name):
     try:
         client = get_sheets_client()
@@ -225,7 +219,6 @@ def get_historical_data(start_date, end_date, campaign_name):
         logger.error(f"Error in get_historical_data for '{campaign_name}': {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# Total historicalGather historical data for all campaigns data
 def get_total_historical_data(start_date, end_date):
     try:
         client = get_sheets_client()
@@ -261,7 +254,6 @@ def get_total_historical_data(start_date, end_date):
         logger.error(f"Error in get_total_historical_data: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# Compute and store total data across all campaigns
 def compute_and_store_total_data():
     try:
         client = get_sheets_client()
@@ -296,7 +288,6 @@ def compute_and_store_total_data():
     except Exception as e:
         logger.error(f"Error in compute_and_store_total_data: {e}")
 
-# Create or update campaign
 def create_or_update_campaign(campaign_name, job_titles, locations):
     if not campaign_name or not job_titles or not locations:
         logger.error("Missing campaign name, job titles, or locations")
@@ -316,7 +307,7 @@ def create_or_update_campaign(campaign_name, job_titles, locations):
         }
         
         if existing:
-            row_index = data.index(existing) + 2  # +2 for header
+            row_index = data.index(existing) + 2
             worksheet.update(f"A{row_index}:D{row_index}", [list(row_data.values())])
             logger.info(f"Updated campaign '{campaign_name}'")
         else:
@@ -327,7 +318,6 @@ def create_or_update_campaign(campaign_name, job_titles, locations):
         logger.error(f"Error in create_or_update_campaign '{campaign_name}': {e}")
         return False
 
-# Delete campaign
 def delete_campaign(campaign_name):
     try:
         client = get_sheets_client()
@@ -352,7 +342,6 @@ def delete_campaign(campaign_name):
     except Exception as e:
         logger.error(f"Error deleting campaign '{campaign_name}': {e}")
 
-# Bulk create campaigns from CSV
 def bulk_create_campaigns(df):
     try:
         grouped = df.groupby("Campaign")
@@ -369,7 +358,22 @@ def bulk_create_campaigns(df):
         logger.error(f"Error in bulk_create_campaigns: {e}")
         return False
 
-# Streamlit UI
+# Add check_data_stored here (new function)
+def check_data_stored(campaign_name):
+    """Check if data was stored for the campaign today in share_of_voice."""
+    try:
+        client = get_sheets_client()
+        worksheet = get_worksheet(client, "share_of_voice")
+        data = worksheet.get_all_records()
+        today = datetime.date.today().isoformat()
+        campaign_data = [row for row in data if row["campaign_name"] == campaign_name and row["date"] == today]
+        if campaign_data:
+            logger.info(f"✅ Check passed: Found {len(campaign_data)} rows for campaign '{campaign_name}' on {today}")
+        else:
+            logger.warning(f"⚠️ Check failed: No data found for campaign '{campaign_name}' on {today}")
+    except Exception as e:
+        logger.error(f"Error checking data for '{campaign_name}': {e}")
+
 def main():
     initialize_sheets()
     st.title("Google for Jobs Visibility Tracker")
@@ -437,7 +441,6 @@ def main():
     elif page == "Campaign Management":
         st.header("Campaign Management")
         
-        # Manual Campaign Entry
         st.subheader("Create a New Campaign")
         campaign_name = st.text_input("Campaign Name (unique identifier)")
         job_titles = st.text_area("Job Titles (one per line)", height=100)
@@ -451,7 +454,6 @@ def main():
             elif create_or_update_campaign(campaign_name, job_titles_list, locations_list):
                 st.success(f"Campaign '{campaign_name}' created/updated successfully!")
 
-        # Bulk Campaign Upload
         st.subheader("Bulk Upload Campaigns")
         uploaded_file = st.file_uploader("Upload CSV (Campaign,Keyword,Location)", type="csv")
         if uploaded_file and st.button("Create/Update from CSV"):
@@ -465,7 +467,6 @@ def main():
             else:
                 st.error("CSV must contain 'Campaign', 'Keyword', and 'Location' columns!")
 
-        # Delete Campaign
         st.subheader("Delete a Campaign")
         client = get_sheets_client()
         worksheet = get_worksheet(client, "campaigns")
@@ -478,7 +479,6 @@ def main():
         else:
             st.write("No campaigns available to delete.")
 
-        # Existing Campaigns
         st.subheader("Existing Campaigns")
         campaigns = worksheet.get_all_records()
         if campaigns:
@@ -494,7 +494,8 @@ if __name__ == "__main__":
         initialize_sheets()
         sov_data, appearances, avg_v_rank, avg_h_rank = compute_sov(campaign_name)
         save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name)
+        check_data_stored(campaign_name)  # Call the new function here
         compute_and_store_total_data()
-        logger.info("Data stored successfully!")
+        logger.info("Data processing completed for GitHub run")
     else:
         main()
