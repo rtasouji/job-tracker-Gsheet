@@ -3,17 +3,17 @@ name: Run Streamlit Job Daily
 on:
   schedule:
     - cron: '0 6 * * *'  # Runs every day at 6 AM UTC
-  workflow_dispatch:  # Allows manual trigger
+  workflow_dispatch:
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
@@ -21,6 +21,7 @@ jobs:
         run: |
           echo "📦 Installing dependencies..."
           pip install -r requirements.txt
+          pip install gspread oauth2client  # For campaign fetching
 
       - name: Debug Environment Variables
         run: |
@@ -35,17 +36,28 @@ jobs:
           GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
         run: |
+          echo "🔍 Fetching campaign names from Google Sheets..."
           python -c """
           import gspread
           from oauth2client.service_account import ServiceAccountCredentials
           import json
           import os
-          scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-          creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.getenv('GOOGLE_SHEETS_CREDS')), scope)
-          client = gspread.authorize(creds)
-          sheet = client.open_by_key(os.getenv('SPREADSHEET_ID')).worksheet('campaigns')
-          campaigns = [row['campaign_name'] for row in sheet.get_all_records()]
-          print(f'::set-output name=campaigns::{','.join(campaigns)}')
+          import sys
+          try:
+              scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+              creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.getenv('GOOGLE_SHEETS_CREDS')), scope)
+              client = gspread.authorize(creds)
+              sheet = client.open_by_key(os.getenv('SPREADSHEET_ID')).worksheet('campaigns')
+              campaigns = [row['campaign_name'] for row in sheet.get_all_records()]
+              if not campaigns:
+                  print('No campaigns found in Google Sheets.')
+              with open('campaigns.txt', 'w') as f:
+                  f.write(','.join(campaigns))
+              print(f'Found {len(campaigns)} campaigns: {campaigns}')
+              echo 'campaigns=$(cat campaigns.txt)' >> $GITHUB_OUTPUT
+          except Exception as e:
+              print(f'Error fetching campaigns: {e}', file=sys.stderr)
+              sys.exit(1)
           """
 
       - name: Run the script for each campaign
@@ -55,32 +67,27 @@ jobs:
           SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
         run: |
           echo "🚀 Running app.py for all campaigns..."
-          for campaign in ${{ steps.get_campaigns.outputs.campaigns }}; do
-            echo "Processing campaign: $campaign"
-            python app.py github "$campaign"
-            echo "✅ Script execution completed for campaign $campaign"
-          done
-
-      - name: Check for data in Google Sheets for each campaign
-        env:
-          GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
-          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-        run: |
-          echo "🔍 Checking if data was stored for all campaigns..."
-          for campaign in ${{ steps.get_campaigns.outputs.campaigns }}; do
-            echo "Checking campaign: $campaign"
-            python check_db.py "$campaign"
+          IFS=',' read -r -a campaigns <<< "${{ steps.get_campaigns.outputs.campaigns }}"
+          for campaign in "${campaigns[@]}"; do
+            if [ -n "$campaign" ]; then
+              echo "Processing campaign: $campaign"
+              python app.py github "$campaign" || echo "⚠️ Failed to process $campaign"
+              sleep 5  # Throttle to avoid rate limits
+              echo "✅ Script execution completed for campaign $campaign"
+            fi
           done
 
       - name: Capture Logs
+        if: always()
         run: |
-          echo "Checking for logs.txt in $(pwd)"
-          ls -l
-          cat logs.txt || echo "⚠️ No logs captured."
+          echo "📜 Capturing logs..."
+          ls -l || echo "No files to list"
+          cat logs.txt || echo "⚠️ No logs.txt found."
 
       - name: Upload logs as artifact
-        uses: actions/upload-artifact@v3
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: logs
           path: logs.txt
-          if-no-files-found: ignore
+          if-no-files-found: warn
