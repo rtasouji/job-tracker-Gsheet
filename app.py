@@ -25,32 +25,58 @@ logger = logging.getLogger("job-tracker")
 
 # Google Sheets setup
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS_JSON = os.getenv("GOOGLE_SHEETS_CREDS")  # Now a dict from TOML
+CREDS_JSON_RAW = os.getenv("GOOGLE_SHEETS_CREDS")  # String from single-line TOML
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+SERP_API_KEY = os.getenv("SERP_API_KEY")
+
+# Parse CREDS_JSON from string to dict
+if CREDS_JSON_RAW:
+    try:
+        CREDS_JSON = json.loads(CREDS_JSON_RAW)
+        logger.info(f"Successfully parsed GOOGLE_SHEETS_CREDS into dict with keys: {list(CREDS_JSON.keys())}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse GOOGLE_SHEETS_CREDS: {e}")
+        logger.error(f"Raw GOOGLE_SHEETS_CREDS: {repr(CREDS_JSON_RAW)}")
+        CREDS_JSON = None
+else:
+    CREDS_JSON = None
 
 # Debug all environment variables
 logger.info("All environment variables:")
-for key, value in os.environ.items():
+for key, value in sorted(os.environ.items()):
     logger.info(f"{key}: {'set' if value else 'not set'} (length: {len(str(value)) if value else 0})")
 logger.info(f"GOOGLE_SHEETS_CREDS: {'set' if CREDS_JSON else 'not set'} (type: {type(CREDS_JSON)})")
+if CREDS_JSON:
+    logger.info(f"GOOGLE_SHEETS_CREDS content: {CREDS_JSON}")
+else:
+    logger.error("GOOGLE_SHEETS_CREDS is not set or failed to parse")
 logger.info(f"SPREADSHEET_ID: {'set' if SPREADSHEET_ID else 'not set'}")
-logger.info(f"SERP_API_KEY: {'set' if os.getenv('SERP_API_KEY') else 'not set'}")
+if not SPREADSHEET_ID:
+    logger.error("SPREADSHEET_ID is not set in environment")
+logger.info(f"SERP_API_KEY: {'set' if SERP_API_KEY else 'not set'}")
+if not SERP_API_KEY:
+    logger.error("SERP_API_KEY is not set in environment")
 
-if not CREDS_JSON or not SPREADSHEET_ID:
+if not CREDS_JSON or not SPREADSHEET_ID or not SERP_API_KEY:
     missing_vars = []
     if not CREDS_JSON:
         missing_vars.append("GOOGLE_SHEETS_CREDS")
     if not SPREADSHEET_ID:
         missing_vars.append("SPREADSHEET_ID")
+    if not SERP_API_KEY:
+        missing_vars.append("SERP_API_KEY")
     error_msg = f"❌ ERROR: Missing environment variables: {', '.join(missing_vars)}"
     logger.error(error_msg)
     raise ValueError(error_msg)
 
 def get_sheets_client():
     try:
-        # CREDS_JSON is already a dict from TOML, no json.loads() needed
-        logger.info(f"GOOGLE_SHEETS_CREDS content: {CREDS_JSON}")
+        if not isinstance(CREDS_JSON, dict):
+            logger.error(f"CREDS_JSON is not a dict: {type(CREDS_JSON)}, value: {CREDS_JSON}")
+            raise ValueError("CREDS_JSON must be a dictionary")
+        logger.info(f"Using CREDS_JSON with keys: {list(CREDS_JSON.keys())}")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(CREDS_JSON, SCOPE)
+        logger.info("Sheets client created successfully")
         return gspread.authorize(creds)
     except Exception as e:
         logger.error(f"Error creating Sheets client: {e}")
