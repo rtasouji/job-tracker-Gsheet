@@ -25,14 +25,14 @@ logger = logging.getLogger("job-tracker")
 
 # Google Sheets setup
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS_JSON = os.getenv("GOOGLE_SHEETS_CREDS")
+CREDS_JSON = os.getenv("GOOGLE_SHEETS_CREDS")  # Now a dict from TOML
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
 # Debug all environment variables
 logger.info("All environment variables:")
 for key, value in os.environ.items():
-    logger.info(f"{key}: {'set' if value else 'not set'} (length: {len(value) if value else 0})")
-logger.info(f"GOOGLE_SHEETS_CREDS: {'set' if CREDS_JSON else 'not set'} (length: {len(CREDS_JSON) if CREDS_JSON else 0})")
+    logger.info(f"{key}: {'set' if value else 'not set'} (length: {len(str(value)) if value else 0})")
+logger.info(f"GOOGLE_SHEETS_CREDS: {'set' if CREDS_JSON else 'not set'} (type: {type(CREDS_JSON)})")
 logger.info(f"SPREADSHEET_ID: {'set' if SPREADSHEET_ID else 'not set'}")
 logger.info(f"SERP_API_KEY: {'set' if os.getenv('SERP_API_KEY') else 'not set'}")
 
@@ -48,15 +48,10 @@ if not CREDS_JSON or not SPREADSHEET_ID:
 
 def get_sheets_client():
     try:
-        cleaned_creds = CREDS_JSON.strip()
-        logger.info(f"Raw GOOGLE_SHEETS_CREDS: {repr(cleaned_creds)}")
-        creds_dict = json.loads(cleaned_creds)
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+        # CREDS_JSON is already a dict from TOML, no json.loads() needed
+        logger.info(f"GOOGLE_SHEETS_CREDS content: {CREDS_JSON}")
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(CREDS_JSON, SCOPE)
         return gspread.authorize(creds)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in GOOGLE_SHEETS_CREDS: {e}")
-        logger.error(f"Full CREDS_JSON: {repr(CREDS_JSON)}")
-        raise ValueError(f"❌ ERROR: GOOGLE_SHEETS_CREDS is not valid JSON: {CREDS_JSON[:50]}...")
     except Exception as e:
         logger.error(f"Error creating Sheets client: {e}")
         raise
@@ -424,6 +419,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "github":
         campaign_name = sys.argv[2] if len(sys.argv) > 2 else "default"
         print(f"🚀 Running automated fetch & store process for campaign: {campaign_name}")
+        initialize_sheets()  # Ensure sheets are initialized for GitHub runs
         sov_data, appearances, avg_v_rank, avg_h_rank = compute_sov(campaign_name)
         save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name)
         compute_and_store_total_data()
