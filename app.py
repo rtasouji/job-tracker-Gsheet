@@ -12,7 +12,6 @@ import plotly.graph_objects as go
 import logging
 import sys
 import time
-import numpy as np  # Added for NaN handling
 
 # Configure logging
 logging.basicConfig(
@@ -173,10 +172,9 @@ def compute_sov(campaign_name):
         domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
     else:
         logger.warning(f"Total SoV is 0 for '{campaign_name}'")
-    
-    # Replace NaN with 0 in averages
-    domain_avg_v_rank = {domain: round(float(np.nan_to_num(sum(vr) / len(vr), 0)), 2) for domain, vr in domain_v_rank.items() if vr}
-    domain_avg_h_rank = {domain: round(float(np.nan_to_num(sum(hr) / len(hr), 0)), 2) for domain, hr in domain_h_rank.items() if hr}
+
+    domain_avg_v_rank = {domain: round(sum(vr) / len(vr), 2) for domain, vr in domain_v_rank.items() if vr}
+    domain_avg_h_rank = {domain: round(sum(hr) / len(hr), 2) for domain, hr in domain_h_rank.items() if hr}
     
     logger.info(f"Computed SoV for '{campaign_name}': {len(domain_sov)} domains, {sum(domain_single_link.values())} single-link appearances")
     return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank, domain_single_link
@@ -210,10 +208,13 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
             df_to_keep = pd.DataFrame(columns=df.columns)
             logger.info("No existing data to keep")
         
-        new_rows = [[domain, today, round(float(np.nan_to_num(sov_data[domain], 0)), 2), appearances[domain], 
-                     float(np.nan_to_num(avg_v_rank.get(domain, 0), 0)), float(np.nan_to_num(avg_h_rank.get(domain, 0), 0)), 
-                     campaign_name, single_link.get(domain, 0)]
-                    for domain in sov_data]
+        new_rows = []
+        for domain in sov_data:
+            sov = sov_data[domain] if pd.notna(sov_data[domain]) else 0
+            avg_v = avg_v_rank.get(domain, 0) if pd.notna(avg_v_rank.get(domain, 0)) else 0
+            avg_h = avg_h_rank.get(domain, 0) if pd.notna(avg_h_rank.get(domain, 0)) else 0
+            new_rows.append([domain, today, round(float(sov), 2), appearances[domain], 
+                             float(avg_v), float(avg_h), campaign_name, single_link.get(domain, 0)])
         logger.info(f"New rows to add: {len(new_rows)}")
         
         updated_data = df_to_keep.values.tolist() if not df_to_keep.empty else []
@@ -330,14 +331,17 @@ def compute_and_store_total_data():
 
         for _, row in df.iterrows():
             domain = row["domain"]
-            domain_sov[domain] += float(np.nan_to_num(row["sov"], 0))
+            sov = row["sov"] if pd.notna(row["sov"]) else 0
+            domain_sov[domain] += float(sov)
             domain_appearances[domain] += int(row["appearances"])
-            domain_v_rank[domain].append(float(np.nan_to_num(row["avg_v_rank"], 0)))
-            domain_h_rank[domain].append(float(np.nan_to_num(row["avg_h_rank"], 0)))
+            v_rank = row["avg_v_rank"] if pd.notna(row["avg_v_rank"]) else 0
+            h_rank = row["avg_h_rank"] if pd.notna(row["avg_h_rank"]) else 0
+            domain_v_rank[domain].append(float(v_rank))
+            domain_h_rank[domain].append(float(h_rank))
             domain_single_link[domain] += int(row["single_link"])
 
-        total_avg_v_rank = {domain: round(float(np.nan_to_num(sum(ranks) / len(ranks), 0)), 2) for domain, ranks in domain_v_rank.items() if ranks}
-        total_avg_h_rank = {domain: round(float(np.nan_to_num(sum(ranks) / len(ranks), 0)), 2) for domain, ranks in domain_h_rank.items() if ranks}
+        total_avg_v_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_v_rank.items() if ranks}
+        total_avg_h_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_h_rank.items() if ranks}
         total_sov = sum(domain_sov.values())
         if total_sov > 0:
             domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
