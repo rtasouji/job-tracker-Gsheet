@@ -6,7 +6,7 @@ on:
 jobs:
   run-script:
     runs-on: ubuntu-latest
-    timeout-minutes: 15  # Fail if job takes >15 minutes
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -42,8 +42,15 @@ jobs:
           import sys
           try:
               creds_raw = os.getenv('GOOGLE_SHEETS_CREDS')
+              if not creds_raw:
+                  raise ValueError('GOOGLE_SHEETS_CREDS is not set or empty')
+              print(f'GOOGLE_SHEETS_CREDS length: {len(creds_raw)}')
               print(f'GOOGLE_SHEETS_CREDS preview: {creds_raw[:50]}...')
+              # Handle potential double-encoding
               creds_dict = json.loads(creds_raw)
+              if isinstance(creds_dict, str):  # If still a string, parse again
+                  print('Detected double-encoded creds, parsing again...')
+                  creds_dict = json.loads(creds_dict)
               print(f'Parsed GOOGLE_SHEETS_CREDS with keys: {list(creds_dict.keys())}')
               scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
               creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -64,7 +71,7 @@ jobs:
           GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
-        timeout-minutes: 10  # Fail if this step takes >10 minutes
+        timeout-minutes: 10
         run: |
           echo "🚀 Running app.py for all campaigns..."
           IFS=',' read -r -a campaigns <<< "${{ steps.get_campaigns.outputs.campaigns }}"
