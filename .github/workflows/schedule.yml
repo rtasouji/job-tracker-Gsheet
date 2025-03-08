@@ -1,3 +1,4 @@
+# .github/workflows/schedule.yml
 name: Run Streamlit Job Daily
 
 on:
@@ -30,8 +31,7 @@ jobs:
           echo "SPREADSHEET_ID is set: ${{ secrets.SPREADSHEET_ID != '' }}"
           echo "SERP_API_KEY is set: ${{ secrets.SERP_API_KEY != '' }}"
           echo "GOOGLE_SHEETS_CREDS length: $(echo -n '${{ secrets.GOOGLE_SHEETS_CREDS }}' | wc -c)"
-          echo "SPREADSHEET_ID: ${{ secrets.SPREA
-DSHEET_ID }}"
+          echo "SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}"  # Fixed line 34
 
       - name: Get all campaign names from Google Sheets
         id: get_campaigns
