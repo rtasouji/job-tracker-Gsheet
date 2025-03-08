@@ -65,7 +65,6 @@ def get_worksheet(client, sheet_name):
     except gspread.WorksheetNotFound:
         logger.info(f"Worksheet {sheet_name} not found, creating it")
         worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
-        # Add header if new
         worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
         return worksheet
 
@@ -115,7 +114,7 @@ def get_google_jobs_results(query, location):
             "api_key": SERP_API_KEY
         }
         
-        response = requests.get(url, params=params, timeout=10)  # Added timeout for safety
+        response = requests.get(url, params=params, timeout=10)
         logger.info(f"SerpAPI response status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
@@ -207,7 +206,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name):
         
         # Clear worksheet and write all data back
         worksheet.clear()
-        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])  # Header
+        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
         if updated_data:
             worksheet.append_rows(updated_data)
         logger.info(f"Replaced {len(new_rows)} rows for '{campaign_name}' on {today}")
@@ -442,9 +441,12 @@ def main():
                 compute_and_store_total_data()
                 st.success("Total data across all campaigns stored successfully!")
             else:
+                # Fetch and replace data for the selected campaign
                 sov_data, appearances, avg_v_rank, avg_h_rank = compute_sov(selected_campaign_name)
                 save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, selected_campaign_name)
-                st.success(f"Data stored successfully for campaign '{selected_campaign_name}'!")
+                # Always update "Total" after fetching a campaign
+                compute_and_store_total_data()
+                st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Total updated!")
 
         st.write("### Visibility Over Time")
         if selected_campaign_name == "Total":
