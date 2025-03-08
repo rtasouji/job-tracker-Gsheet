@@ -65,7 +65,7 @@ def get_worksheet(client, sheet_name):
     except gspread.WorksheetNotFound:
         logger.info(f"Worksheet {sheet_name} not found, creating it")
         worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
-        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
         return worksheet
 
 def initialize_sheets():
@@ -134,12 +134,13 @@ def compute_sov(campaign_name):
     domain_appearances = defaultdict(int)
     domain_v_rank = defaultdict(list)
     domain_h_rank = defaultdict(list)
+    domain_single_link = defaultdict(int)  # New: Track single-link appearances
     total_sov = 0
 
     jobs_data = load_jobs(campaign_name)
     if not jobs_data:
         logger.warning(f"No job data for campaign '{campaign_name}'")
-        return {}, {}, {}, {}
+        return {}, {}, {}, {}, {}
 
     for job_query in jobs_data:
         job_title = job_query["job_title"]
@@ -148,16 +149,25 @@ def compute_sov(campaign_name):
         for job_rank, job in enumerate(jobs, start=1):
             apply_options = job.get("apply_options", [])
             V = 1 / job_rank
-            for link_order, option in enumerate(apply_options, start=1):
-                if "link" in option:
-                    domain = extract_domain(option["link"])
-                    H = 1 / link_order
-                    weight = V * H
-                    domain_sov[domain] += weight
-                    domain_appearances[domain] += 1
-                    domain_v_rank[domain].append(job_rank)
-                    domain_h_rank[domain].append(link_order)
-                    total_sov += weight
+            if len(apply_options) == 1 and "link" in apply_options[0]:  # Single link case
+                domain = extract_domain(apply_options[0]["link"])
+                domain_single_link[domain] += 1
+                domain_sov[domain] += V  # Weight is V * H (H=1 since only one link)
+                domain_appearances[domain] += 1
+                domain_v_rank[domain].append(job_rank)
+                domain_h_rank[domain].append(1)  # H=1 for single link
+                total_sov += V
+            else:  # Multiple links
+                for link_order, option in enumerate(apply_options, start=1):
+                    if "link" in option:
+                        domain = extract_domain(option["link"])
+                        H = 1 / link_order
+                        weight = V * H
+                        domain_sov[domain] += weight
+                        domain_appearances[domain] += 1
+                        domain_v_rank[domain].append(job_rank)
+                        domain_h_rank[domain].append(link_order)
+                        total_sov += weight
         time.sleep(1)
 
     if total_sov > 0:
@@ -166,15 +176,15 @@ def compute_sov(campaign_name):
     domain_avg_v_rank = {domain: round(sum(vr) / len(vr), 2) for domain, vr in domain_v_rank.items() if vr}
     domain_avg_h_rank = {domain: round(sum(hr) / len(hr), 2) for domain, hr in domain_h_rank.items() if hr}
     
-    logger.info(f"Computed SoV for '{campaign_name}': {len(domain_sov)} domains")
-    return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank
+    logger.info(f"Computed SoV for '{campaign_name}': {len(domain_sov)} domains, {sum(domain_single_link.values())} single-link appearances")
+    return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank, domain_single_link
 
 def extract_domain(url):
     extracted = tldextract.extract(url)
     domain = f"{extracted.domain}.{extracted.suffix}" if extracted.suffix else extracted.domain
     return domain.lower().replace("www.", "")
 
-def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name):
+def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name):
     if not sov_data:
         logger.warning(f"No SoV data to save for campaign '{campaign_name}'")
         return
@@ -186,7 +196,11 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name):
         logger.info(f"Saving data for campaign '{campaign_name}' on {today}")
         
         all_data = worksheet.get_all_records()
-        df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+        # Update schema to include "single_link"
+        df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
+        # Fill missing single_link with 0 for older data
+        if "single_link" not in df.columns:
+            df["single_link"] = 0
         
         if not df.empty:
             df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["date"] != today)]
@@ -194,14 +208,14 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name):
             df_to_keep = pd.DataFrame(columns=df.columns)
         
         new_rows = [[domain, today, round(sov_data[domain], 2), appearances[domain], 
-                     avg_v_rank.get(domain, 0), avg_h_rank.get(domain, 0), campaign_name]
+                     avg_v_rank.get(domain, 0), avg_h_rank.get(domain, 0), campaign_name, single_link.get(domain, 0)]
                     for domain in sov_data]
         
         updated_data = df_to_keep.values.tolist() if not df_to_keep.empty else []
         updated_data.extend(new_rows)
         
         worksheet.clear()
-        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
         if updated_data:
             worksheet.append_rows(updated_data)
         logger.info(f"Replaced {len(new_rows)} rows for '{campaign_name}' on {today}")
@@ -213,7 +227,9 @@ def get_historical_data(start_date, end_date, campaign_name):
         client = get_sheets_client()
         worksheet = get_worksheet(client, "share_of_voice")
         data = worksheet.get_all_records()
-        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
+        if "single_link" not in df.columns:
+            df["single_link"] = 0
         
         df = df[df["campaign_name"] == campaign_name]
         df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -227,11 +243,12 @@ def get_historical_data(start_date, end_date, campaign_name):
             "sov": "mean",
             "appearances": "sum",
             "avg_v_rank": "mean",
-            "avg_h_rank": "mean"
+            "avg_h_rank": "mean",
+            "single_link": "sum"
         })
         
         df_sov = df_agg.pivot(index="domain", columns="date", values="sov").fillna(0)
-        df_metrics = df_agg.pivot(index="domain", columns="date", values=["appearances", "avg_v_rank", "avg_h_rank"]).fillna(0)
+        df_metrics = df_agg.pivot(index="domain", columns="date", values=["appearances", "avg_v_rank", "avg_h_rank", "single_link"]).fillna(0)
         df_metrics = df_metrics.swaplevel(axis=1).sort_index(axis=1)
         df_appearances = df_agg.pivot(index="domain", columns="date", values="appearances").fillna(0)
 
@@ -249,9 +266,10 @@ def get_total_historical_data(start_date, end_date):
         client = get_sheets_client()
         worksheet = get_worksheet(client, "share_of_voice")
         data = worksheet.get_all_records()
-        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
+        if "single_link" not in df.columns:
+            df["single_link"] = 0
         
-        # Filter for "Total" campaign only
         df = df[df["campaign_name"] == "Total"]
         df["date"] = pd.to_datetime(df["date"]).dt.date
         df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
@@ -260,11 +278,10 @@ def get_total_historical_data(start_date, end_date):
             logger.info(f"No 'Total' historical data in range {start_date} to {end_date}")
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-        # Use stored values directly, no re-aggregation
-        df_agg = df[["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank"]]
+        df_agg = df[["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "single_link"]]
         
         df_sov = df_agg.pivot(index="domain", columns="date", values="sov").fillna(0)
-        df_metrics = df_agg.pivot(index="domain", columns="date", values=["appearances", "avg_v_rank", "avg_h_rank"]).fillna(0)
+        df_metrics = df_agg.pivot(index="domain", columns="date", values=["appearances", "avg_v_rank", "avg_h_rank", "single_link"]).fillna(0)
         df_metrics = df_metrics.swaplevel(axis=1).sort_index(axis=1)
         df_appearances = df_agg.pivot(index="domain", columns="date", values="appearances").fillna(0)
 
@@ -286,7 +303,9 @@ def compute_and_store_total_data():
             logger.warning("No data in 'share_of_voice' to compute totals")
             return
         
-        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
+        if "single_link" not in df.columns:
+            df["single_link"] = 0
         
         today = datetime.date.today().isoformat()
         df = df[(df["date"] == today) & (df["campaign_name"] != "Total")]
@@ -298,6 +317,7 @@ def compute_and_store_total_data():
         domain_appearances = defaultdict(int)
         domain_v_rank = defaultdict(list)
         domain_h_rank = defaultdict(list)
+        domain_single_link = defaultdict(int)
 
         for _, row in df.iterrows():
             domain = row["domain"]
@@ -305,6 +325,7 @@ def compute_and_store_total_data():
             domain_appearances[domain] += int(row["appearances"])
             domain_v_rank[domain].append(float(row["avg_v_rank"]))
             domain_h_rank[domain].append(float(row["avg_h_rank"]))
+            domain_single_link[domain] += int(row["single_link"])
 
         total_avg_v_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_v_rank.items() if ranks}
         total_avg_h_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_h_rank.items() if ranks}
@@ -312,7 +333,7 @@ def compute_and_store_total_data():
         if total_sov > 0:
             domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
 
-        save_to_db(domain_sov, domain_appearances, total_avg_v_rank, total_avg_h_rank, "Total")
+        save_to_db(domain_sov, domain_appearances, total_avg_v_rank, total_avg_h_rank, domain_single_link, "Total")
         logger.info(f"Total data computed and stored for {today} based on {len(df['campaign_name'].unique())} campaign(s)")
     except Exception as e:
         logger.error(f"Error in compute_and_store_total_data: {e}")
@@ -357,7 +378,7 @@ def delete_campaign(campaign_name):
         sov_rows_to_keep = [row for row in sov_data if row["campaign_name"] != campaign_name]
         if len(sov_rows_to_keep) < len(sov_data):
             sov_worksheet.clear()
-            sov_worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+            sov_worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
             if sov_rows_to_keep:
                 sov_worksheet.append_rows([list(row.values()) for row in sov_rows_to_keep])
             logger.info(f"Deleted records for campaign '{campaign_name}' from share_of_voice")
@@ -433,8 +454,8 @@ def main():
                 compute_and_store_total_data()
                 st.success("Total data across all campaigns stored successfully!")
             else:
-                sov_data, appearances, avg_v_rank, avg_h_rank = compute_sov(selected_campaign_name)
-                save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, selected_campaign_name)
+                sov_data, appearances, avg_v_rank, avg_h_rank, single_link = compute_sov(selected_campaign_name)
+                save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, selected_campaign_name)
                 compute_and_store_total_data()
                 st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Total updated!")
 
@@ -520,8 +541,8 @@ if __name__ == "__main__":
         campaign_name = sys.argv[2] if len(sys.argv) > 2 else "default"
         logger.info(f"Running automated fetch & store process for campaign: {campaign_name}")
         initialize_sheets()
-        sov_data, appearances, avg_v_rank, avg_h_rank = compute_sov(campaign_name)
-        save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name)
+        sov_data, appearances, avg_v_rank, avg_h_rank, single_link = compute_sov(campaign_name)
+        save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name)
         check_data_stored(campaign_name)
         compute_and_store_total_data()
         logger.info("Data processing completed for GitHub run")
