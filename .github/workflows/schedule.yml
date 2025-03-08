@@ -21,7 +21,7 @@ jobs:
         run: |
           echo "📦 Installing dependencies..."
           pip install -r requirements.txt
-          pip install gspread oauth2client  # For campaign fetching
+          pip install gspread oauth2client
 
       - name: Debug Environment Variables
         run: |
@@ -29,6 +29,9 @@ jobs:
           echo "GOOGLE_SHEETS_CREDS is set: ${{ secrets.GOOGLE_SHEETS_CREDS != '' }}"
           echo "SPREADSHEET_ID is set: ${{ secrets.SPREADSHEET_ID != '' }}"
           echo "SERP_API_KEY is set: ${{ secrets.SERP_API_KEY != '' }}"
+          echo "GOOGLE_SHEETS_CREDS length: $(echo -n '${{ secrets.GOOGLE_SHEETS_CREDS }}' | wc -c)"
+          echo "SPREADSHEET_ID: ${{ secrets.SPREA
+DSHEET_ID }}"
 
       - name: Get all campaign names from Google Sheets
         id: get_campaigns
@@ -37,28 +40,49 @@ jobs:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
         run: |
           echo "🔍 Fetching campaign names from Google Sheets..."
-          python -c """
+          python -c "
           import gspread
           from oauth2client.service_account import ServiceAccountCredentials
           import json
           import os
           import sys
           try:
+              creds_raw = os.getenv('GOOGLE_SHEETS_CREDS')
+              if not creds_raw:
+                  raise ValueError('GOOGLE_SHEETS_CREDS is not set or empty')
+              print(f'GOOGLE_SHEETS_CREDS length: {len(creds_raw)}')
+              creds_dict = json.loads(creds_raw)
+              print(f'Parsed GOOGLE_SHEETS_CREDS with keys: {list(creds_dict.keys())}')
               scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-              creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(os.getenv('GOOGLE_SHEETS_CREDS')), scope)
+              creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
               client = gspread.authorize(creds)
-              sheet = client.open_by_key(os.getenv('SPREADSHEET_ID')).worksheet('campaigns')
+              spreadsheet_id = os.getenv('SPREADSHEET_ID')
+              if not spreadsheet_id:
+                  raise ValueError('SPREADSHEET_ID is not set or empty')
+              print(f'Opening spreadsheet with ID: {spreadsheet_id}')
+              spreadsheet = client.open_by_key(spreadsheet_id)
+              try:
+                  sheet = spreadsheet.worksheet('campaigns')
+              except gspread.WorksheetNotFound:
+                  print('Worksheet \"campaigns\" not found in spreadsheet')
+                  sheet = spreadsheet.add_worksheet(title='campaigns', rows=1000, cols=10)
+                  print('Created \"campaigns\" worksheet')
               campaigns = [row['campaign_name'] for row in sheet.get_all_records()]
               if not campaigns:
-                  print('No campaigns found in Google Sheets.')
+                  print('No campaigns found in \"campaigns\" worksheet')
               with open('campaigns.txt', 'w') as f:
                   f.write(','.join(campaigns))
               print(f'Found {len(campaigns)} campaigns: {campaigns}')
-              echo 'campaigns=$(cat campaigns.txt)' >> $GITHUB_OUTPUT
           except Exception as e:
-              print(f'Error fetching campaigns: {e}', file=sys.stderr)
+              print(f'Error fetching campaigns: {str(e)}', file=sys.stderr)
               sys.exit(1)
-          """
+          "
+          if [ -f campaigns.txt ]; then
+            echo "campaigns=$(cat campaigns.txt)" >> $GITHUB_OUTPUT
+          else
+            echo "campaigns=" >> $GITHUB_OUTPUT
+            echo "No campaigns.txt created, setting empty output" >&2
+          fi
 
       - name: Run the script for each campaign
         env:
@@ -68,14 +92,18 @@ jobs:
         run: |
           echo "🚀 Running app.py for all campaigns..."
           IFS=',' read -r -a campaigns <<< "${{ steps.get_campaigns.outputs.campaigns }}"
-          for campaign in "${campaigns[@]}"; do
-            if [ -n "$campaign" ]; then
-              echo "Processing campaign: $campaign"
-              python app.py github "$campaign" || echo "⚠️ Failed to process $campaign"
-              sleep 5  # Throttle to avoid rate limits
-              echo "✅ Script execution completed for campaign $campaign"
-            fi
-          done
+          if [ ${#campaigns[@]} -eq 0 ]; then
+            echo "No campaigns to process"
+          else
+            for campaign in "${campaigns[@]}"; do
+              if [ -n "$campaign" ]; then
+                echo "Processing campaign: $campaign"
+                python app.py github "$campaign" || echo "⚠️ Failed to process $campaign"
+                sleep 5
+                echo "✅ Script execution completed for campaign $campaign"
+              fi
+            done
+          fi
 
       - name: Capture Logs
         if: always()
