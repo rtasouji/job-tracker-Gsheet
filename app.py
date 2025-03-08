@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import logging
 import sys
 import time
+import numpy as np  # Added for NaN handling
 
 # Configure logging
 logging.basicConfig(
@@ -27,7 +28,6 @@ CREDS_JSON_RAW = os.getenv("GOOGLE_SHEETS_CREDS")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 SERP_API_KEY = os.getenv("SERP_API_KEY")
 
-# Parse CREDS_JSON with double-encoding handling
 if CREDS_JSON_RAW:
     try:
         CREDS_JSON = json.loads(CREDS_JSON_RAW)
@@ -41,7 +41,6 @@ if CREDS_JSON_RAW:
 else:
     CREDS_JSON = None
 
-# Validate environment variables
 if not CREDS_JSON or not SPREADSHEET_ID or not SERP_API_KEY:
     missing_vars = [var for var, val in [("GOOGLE_SHEETS_CREDS", CREDS_JSON), ("SPREADSHEET_ID", SPREADSHEET_ID), ("SERP_API_KEY", SERP_API_KEY)] if not val]
     logger.error(f"Missing environment variables: {', '.join(missing_vars)}")
@@ -134,7 +133,7 @@ def compute_sov(campaign_name):
     domain_appearances = defaultdict(int)
     domain_v_rank = defaultdict(list)
     domain_h_rank = defaultdict(list)
-    domain_single_link = defaultdict(int)  # New: Track single-link appearances
+    domain_single_link = defaultdict(int)
     total_sov = 0
 
     jobs_data = load_jobs(campaign_name)
@@ -149,15 +148,15 @@ def compute_sov(campaign_name):
         for job_rank, job in enumerate(jobs, start=1):
             apply_options = job.get("apply_options", [])
             V = 1 / job_rank
-            if len(apply_options) == 1 and "link" in apply_options[0]:  # Single link case
+            if len(apply_options) == 1 and "link" in apply_options[0]:
                 domain = extract_domain(apply_options[0]["link"])
                 domain_single_link[domain] += 1
-                domain_sov[domain] += V  # Weight is V * H (H=1 since only one link)
+                domain_sov[domain] += V
                 domain_appearances[domain] += 1
                 domain_v_rank[domain].append(job_rank)
-                domain_h_rank[domain].append(1)  # H=1 for single link
+                domain_h_rank[domain].append(1)
                 total_sov += V
-            else:  # Multiple links
+            else:
                 for link_order, option in enumerate(apply_options, start=1):
                     if "link" in option:
                         domain = extract_domain(option["link"])
@@ -172,9 +171,12 @@ def compute_sov(campaign_name):
 
     if total_sov > 0:
         domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
+    else:
+        logger.warning(f"Total SoV is 0 for '{campaign_name}'")
     
-    domain_avg_v_rank = {domain: round(sum(vr) / len(vr), 2) for domain, vr in domain_v_rank.items() if vr}
-    domain_avg_h_rank = {domain: round(sum(hr) / len(hr), 2) for domain, hr in domain_h_rank.items() if hr}
+    # Replace NaN with 0 in averages
+    domain_avg_v_rank = {domain: round(float(np.nan_to_num(sum(vr) / len(vr), 0)), 2) for domain, vr in domain_v_rank.items() if vr}
+    domain_avg_h_rank = {domain: round(float(np.nan_to_num(sum(hr) / len(hr), 0)), 2) for domain, hr in domain_h_rank.items() if hr}
     
     logger.info(f"Computed SoV for '{campaign_name}': {len(domain_sov)} domains, {sum(domain_single_link.values())} single-link appearances")
     return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank, domain_single_link
@@ -196,31 +198,38 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         logger.info(f"Saving data for campaign '{campaign_name}' on {today}")
         
         all_data = worksheet.get_all_records()
-        # Update schema to include "single_link"
         df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
-        # Fill missing single_link with 0 for older data
         if "single_link" not in df.columns:
             df["single_link"] = 0
+        logger.info(f"Existing data: {len(df)} rows")
         
         if not df.empty:
             df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["date"] != today)]
+            logger.info(f"Keeping {len(df_to_keep)} rows after filtering")
         else:
             df_to_keep = pd.DataFrame(columns=df.columns)
+            logger.info("No existing data to keep")
         
-        new_rows = [[domain, today, round(sov_data[domain], 2), appearances[domain], 
-                     avg_v_rank.get(domain, 0), avg_h_rank.get(domain, 0), campaign_name, single_link.get(domain, 0)]
+        new_rows = [[domain, today, round(float(np.nan_to_num(sov_data[domain], 0)), 2), appearances[domain], 
+                     float(np.nan_to_num(avg_v_rank.get(domain, 0), 0)), float(np.nan_to_num(avg_h_rank.get(domain, 0), 0)), 
+                     campaign_name, single_link.get(domain, 0)]
                     for domain in sov_data]
+        logger.info(f"New rows to add: {len(new_rows)}")
         
         updated_data = df_to_keep.values.tolist() if not df_to_keep.empty else []
         updated_data.extend(new_rows)
+        logger.info(f"Total rows to write: {len(updated_data)}")
         
-        worksheet.clear()
-        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
         if updated_data:
+            worksheet.clear()
+            worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
             worksheet.append_rows(updated_data)
-        logger.info(f"Replaced {len(new_rows)} rows for '{campaign_name}' on {today}")
+            logger.info(f"Replaced {len(new_rows)} rows for '{campaign_name}' on {today}")
+        else:
+            logger.warning(f"No data to write for '{campaign_name}' on {today}, sheet unchanged")
     except Exception as e:
         logger.error(f"Error saving to Google Sheets for campaign '{campaign_name}': {e}")
+        raise
 
 def get_historical_data(start_date, end_date, campaign_name):
     try:
@@ -321,14 +330,14 @@ def compute_and_store_total_data():
 
         for _, row in df.iterrows():
             domain = row["domain"]
-            domain_sov[domain] += float(row["sov"])
+            domain_sov[domain] += float(np.nan_to_num(row["sov"], 0))
             domain_appearances[domain] += int(row["appearances"])
-            domain_v_rank[domain].append(float(row["avg_v_rank"]))
-            domain_h_rank[domain].append(float(row["avg_h_rank"]))
+            domain_v_rank[domain].append(float(np.nan_to_num(row["avg_v_rank"], 0)))
+            domain_h_rank[domain].append(float(np.nan_to_num(row["avg_h_rank"], 0)))
             domain_single_link[domain] += int(row["single_link"])
 
-        total_avg_v_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_v_rank.items() if ranks}
-        total_avg_h_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_h_rank.items() if ranks}
+        total_avg_v_rank = {domain: round(float(np.nan_to_num(sum(ranks) / len(ranks), 0)), 2) for domain, ranks in domain_v_rank.items() if ranks}
+        total_avg_h_rank = {domain: round(float(np.nan_to_num(sum(ranks) / len(ranks), 0)), 2) for domain, ranks in domain_h_rank.items() if ranks}
         total_sov = sum(domain_sov.values())
         if total_sov > 0:
             domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
