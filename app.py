@@ -323,7 +323,9 @@ def compute_and_store_total_data():
         save_to_db(domain_sov, domain_appearances, total_avg_v_rank, total_avg_h_rank, "Total")
         logger.info(f"Total data computed and stored for {today} based on {len(df['campaign_name'].unique())} campaign(s)")
     except Exception as e:
-        logger.error(f"Error in compute_and_store_total_data: {e}")def create_or_update_campaign(campaign_name, job_titles, locations):
+        logger.error(f"Error in compute_and_store_total_data: {e}")
+
+def create_or_update_campaign(campaign_name, job_titles, locations):
     if not campaign_name or not job_titles or not locations:
         logger.error("Missing campaign name, job titles, or locations")
         return False
