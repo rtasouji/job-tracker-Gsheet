@@ -27,10 +27,13 @@ CREDS_JSON_RAW = os.getenv("GOOGLE_SHEETS_CREDS")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 SERP_API_KEY = os.getenv("SERP_API_KEY")
 
-# Parse CREDS_JSON
+# Parse CREDS_JSON with double-encoding handling
 if CREDS_JSON_RAW:
     try:
         CREDS_JSON = json.loads(CREDS_JSON_RAW)
+        if isinstance(CREDS_JSON, str):  # Handle double-encoded creds
+            logger.info("Detected double-encoded GOOGLE_SHEETS_CREDS, parsing again")
+            CREDS_JSON = json.loads(CREDS_JSON)
         logger.info(f"Successfully parsed GOOGLE_SHEETS_CREDS into dict with keys: {list(CREDS_JSON.keys())}")
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse GOOGLE_SHEETS_CREDS: {e}")
@@ -61,7 +64,10 @@ def get_worksheet(client, sheet_name):
         return worksheet
     except gspread.WorksheetNotFound:
         logger.info(f"Worksheet {sheet_name} not found, creating it")
-        return spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
+        worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
+        # Add header if new
+        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+        return worksheet
 
 def initialize_sheets():
     try:
@@ -109,13 +115,16 @@ def get_google_jobs_results(query, location):
             "api_key": SERP_API_KEY
         }
         
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=10)  # Added timeout for safety
         logger.info(f"SerpAPI response status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
         jobs = data.get("jobs_results", [])
         logger.info(f"Fetched {len(jobs)} jobs for query: '{query}'")
         return jobs
+    except requests.Timeout:
+        logger.error(f"Timeout fetching SerpAPI for '{query}'")
+        return []
     except requests.RequestException as e:
         logger.error(f"SerpAPI request failed: {e}")
         return []
@@ -175,11 +184,33 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name):
         client = get_sheets_client()
         worksheet = get_worksheet(client, "share_of_voice")
         today = datetime.date.today().isoformat()
-        rows = [[domain, today, round(sov_data[domain], 2), appearances[domain], 
-                 avg_v_rank.get(domain, 0), avg_h_rank.get(domain, 0), campaign_name]
-                for domain in sov_data]
-        worksheet.append_rows(rows)
-        logger.info(f"Saved {len(rows)} rows to 'share_of_voice' for campaign '{campaign_name}'")
+        logger.info(f"Saving data for campaign '{campaign_name}' on {today}")
+        
+        # Fetch all existing data
+        all_data = worksheet.get_all_records()
+        df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+        
+        # Filter out rows for this campaign and date
+        if not df.empty:
+            df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["date"] != today)]
+        else:
+            df_to_keep = pd.DataFrame(columns=df.columns)
+        
+        # Prepare new rows
+        new_rows = [[domain, today, round(sov_data[domain], 2), appearances[domain], 
+                     avg_v_rank.get(domain, 0), avg_h_rank.get(domain, 0), campaign_name]
+                    for domain in sov_data]
+        
+        # Combine kept rows with new rows
+        updated_data = df_to_keep.values.tolist() if not df_to_keep.empty else []
+        updated_data.extend(new_rows)
+        
+        # Clear worksheet and write all data back
+        worksheet.clear()
+        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])  # Header
+        if updated_data:
+            worksheet.append_rows(updated_data)
+        logger.info(f"Replaced {len(new_rows)} rows for '{campaign_name}' on {today}")
     except Exception as e:
         logger.error(f"Error saving to Google Sheets for campaign '{campaign_name}': {e}")
 
@@ -264,6 +295,12 @@ def compute_and_store_total_data():
             return
         
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
+        
+        # Exclude "Total" rows to avoid double-counting
+        df = df[df["campaign_name"] != "Total"]
+        if df.empty:
+            logger.warning("No non-Total data to aggregate")
+            return
         
         domain_sov = defaultdict(float)
         domain_appearances = defaultdict(int)
@@ -358,7 +395,6 @@ def bulk_create_campaigns(df):
         logger.error(f"Error in bulk_create_campaigns: {e}")
         return False
 
-# Add check_data_stored here (new function)
 def check_data_stored(campaign_name):
     """Check if data was stored for the campaign today in share_of_voice."""
     try:
@@ -494,7 +530,7 @@ if __name__ == "__main__":
         initialize_sheets()
         sov_data, appearances, avg_v_rank, avg_h_rank = compute_sov(campaign_name)
         save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name)
-        check_data_stored(campaign_name)  # Call the new function here
+        check_data_stored(campaign_name)
         compute_and_store_total_data()
         logger.info("Data processing completed for GitHub run")
     else:

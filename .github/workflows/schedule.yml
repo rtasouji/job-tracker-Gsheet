@@ -1,32 +1,38 @@
 name: Run Streamlit Job Daily
 on:
   schedule:
-    - cron: '0 6 * * *'
-  workflow_dispatch:
+    - cron: '0 6 * * *'  # Runs daily at 6 AM UTC
+  workflow_dispatch:  # Allows manual triggering
+
 jobs:
   run-script:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 15  # Fails if the entire job takes >15 minutes
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        timeout-minutes: 5
+        timeout-minutes: 5  # Fails if checkout takes >5 minutes
+
       - name: Set up Python
         uses: actions/setup-python@v5
-        timeout-minutes: 5
+        timeout-minutes: 5  # Fails if setup takes >5 minutes
         with:
           python-version: '3.9'
+
       - name: Install dependencies
-        timeout-minutes: 5
+        timeout-minutes: 5  # Fails if install takes >5 minutes
         run: |
           echo "📦 Installing dependencies..."
           pip install -r requirements.txt
-          pip install gspread oauth2client
+          pip install gspread oauth2client pandas  # Ensure pandas is installed
+
       - name: Debug Environment Variables
         run: |
           echo "🔍 Debugging Environment Variables..."
           echo "GOOGLE_SHEETS_CREDS length: $(echo -n '${{ secrets.GOOGLE_SHEETS_CREDS }}' | wc -c)"
           echo "SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}"
+          echo "SERP_API_KEY length: $(echo -n '${{ secrets.SERP_API_KEY }}' | wc -c)"
+
       - name: Get all campaign names from Google Sheets
         id: get_campaigns
         env:
@@ -46,9 +52,8 @@ jobs:
                   raise ValueError('GOOGLE_SHEETS_CREDS is not set or empty')
               print(f'GOOGLE_SHEETS_CREDS length: {len(creds_raw)}')
               print(f'GOOGLE_SHEETS_CREDS preview: {creds_raw[:50]}...')
-              # Handle potential double-encoding
               creds_dict = json.loads(creds_raw)
-              if isinstance(creds_dict, str):  # If still a string, parse again
+              if isinstance(creds_dict, str):
                   print('Detected double-encoded creds, parsing again...')
                   creds_dict = json.loads(creds_dict)
               print(f'Parsed GOOGLE_SHEETS_CREDS with keys: {list(creds_dict.keys())}')
@@ -66,30 +71,35 @@ jobs:
               sys.exit(1)
           "
           echo "campaigns=$(cat campaigns.txt)" >> $GITHUB_OUTPUT
+
       - name: Run the script for each campaign
         env:
           GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
-        timeout-minutes: 10
+        timeout-minutes: 10  # Fails if this step takes >10 minutes
         run: |
           echo "🚀 Running app.py for all campaigns..."
           IFS=',' read -r -a campaigns <<< "${{ steps.get_campaigns.outputs.campaigns }}"
           for campaign in "${campaigns[@]}"; do
-            if [ -n "$campaign" ]; then
+            if [ -n "$campaign" ] && [ "$campaign" != "Total" ]; then  # Skip "Total" as it's not a real campaign
               echo "Processing campaign: $campaign"
               python app.py github "$campaign" || echo "⚠️ Failed to process $campaign"
-              sleep 5
+              sleep 5  # Small delay to avoid overwhelming APIs
               echo "✅ Script execution completed for campaign $campaign"
             fi
           done
+          echo "Computing Total data..."
+          python -c "from app import compute_and_store_total_data; compute_and_store_total_data()"
+
       - name: Capture Logs
-        if: always()
+        if: always()  # Runs even if previous steps fail
         run: |
           echo "📜 Capturing logs..."
           cat logs.txt || echo "⚠️ No logs.txt found."
+
       - name: Upload logs as artifact
-        if: always()
+        if: always()  # Uploads logs even on failure
         uses: actions/upload-artifact@v4
         with:
           name: logs
