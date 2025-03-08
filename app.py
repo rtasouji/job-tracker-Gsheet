@@ -31,7 +31,7 @@ SERP_API_KEY = os.getenv("SERP_API_KEY")
 if CREDS_JSON_RAW:
     try:
         CREDS_JSON = json.loads(CREDS_JSON_RAW)
-        if isinstance(CREDS_JSON, str):  # Handle double-encoded creds
+        if isinstance(CREDS_JSON, str):
             logger.info("Detected double-encoded GOOGLE_SHEETS_CREDS, parsing again")
             CREDS_JSON = json.loads(CREDS_JSON)
         logger.info(f"Successfully parsed GOOGLE_SHEETS_CREDS into dict with keys: {list(CREDS_JSON.keys())}")
@@ -185,26 +185,21 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, campaign_name):
         today = datetime.date.today().isoformat()
         logger.info(f"Saving data for campaign '{campaign_name}' on {today}")
         
-        # Fetch all existing data
         all_data = worksheet.get_all_records()
         df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
         
-        # Filter out rows for this campaign and date
         if not df.empty:
             df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["date"] != today)]
         else:
             df_to_keep = pd.DataFrame(columns=df.columns)
         
-        # Prepare new rows
         new_rows = [[domain, today, round(sov_data[domain], 2), appearances[domain], 
                      avg_v_rank.get(domain, 0), avg_h_rank.get(domain, 0), campaign_name]
                     for domain in sov_data]
         
-        # Combine kept rows with new rows
         updated_data = df_to_keep.values.tolist() if not df_to_keep.empty else []
         updated_data.extend(new_rows)
         
-        # Clear worksheet and write all data back
         worksheet.clear()
         worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
         if updated_data:
@@ -256,19 +251,17 @@ def get_total_historical_data(start_date, end_date):
         data = worksheet.get_all_records()
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
         
+        # Filter for "Total" campaign only
+        df = df[df["campaign_name"] == "Total"]
         df["date"] = pd.to_datetime(df["date"]).dt.date
         df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
         
         if df.empty:
-            logger.info(f"No total historical data in range {start_date} to {end_date}")
+            logger.info(f"No 'Total' historical data in range {start_date} to {end_date}")
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-        df_agg = df.groupby(["domain", "date"], as_index=False).agg({
-            "sov": "sum",
-            "appearances": "sum",
-            "avg_v_rank": "mean",
-            "avg_h_rank": "mean"
-        })
+        # Use stored values directly, no re-aggregation
+        df_agg = df[["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank"]]
         
         df_sov = df_agg.pivot(index="domain", columns="date", values="sov").fillna(0)
         df_metrics = df_agg.pivot(index="domain", columns="date", values=["appearances", "avg_v_rank", "avg_h_rank"]).fillna(0)
@@ -295,7 +288,6 @@ def compute_and_store_total_data():
         
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
         
-        # Filter for today's data only and exclude "Total" rows
         today = datetime.date.today().isoformat()
         df = df[(df["date"] == today) & (df["campaign_name"] != "Total")]
         if df.empty:
@@ -396,7 +388,6 @@ def bulk_create_campaigns(df):
         return False
 
 def check_data_stored(campaign_name):
-    """Check if data was stored for the campaign today in share_of_voice."""
     try:
         client = get_sheets_client()
         worksheet = get_worksheet(client, "share_of_voice")
@@ -442,10 +433,8 @@ def main():
                 compute_and_store_total_data()
                 st.success("Total data across all campaigns stored successfully!")
             else:
-                # Fetch and replace data for the selected campaign
                 sov_data, appearances, avg_v_rank, avg_h_rank = compute_sov(selected_campaign_name)
                 save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, selected_campaign_name)
-                # Always update "Total" after fetching a campaign
                 compute_and_store_total_data()
                 st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Total updated!")
 
