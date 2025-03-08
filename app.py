@@ -295,10 +295,11 @@ def compute_and_store_total_data():
         
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name"])
         
-        # Exclude "Total" rows to avoid double-counting
-        df = df[df["campaign_name"] != "Total"]
+        # Filter for today's data only and exclude "Total" rows
+        today = datetime.date.today().isoformat()
+        df = df[(df["date"] == today) & (df["campaign_name"] != "Total")]
         if df.empty:
-            logger.warning("No non-Total data to aggregate")
+            logger.warning(f"No non-Total data to aggregate for {today}")
             return
         
         domain_sov = defaultdict(float)
@@ -320,11 +321,9 @@ def compute_and_store_total_data():
             domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
 
         save_to_db(domain_sov, domain_appearances, total_avg_v_rank, total_avg_h_rank, "Total")
-        logger.info("Total data computed and stored successfully")
+        logger.info(f"Total data computed and stored for {today} based on {len(df['campaign_name'].unique())} campaign(s)")
     except Exception as e:
-        logger.error(f"Error in compute_and_store_total_data: {e}")
-
-def create_or_update_campaign(campaign_name, job_titles, locations):
+        logger.error(f"Error in compute_and_store_total_data: {e}")def create_or_update_campaign(campaign_name, job_titles, locations):
     if not campaign_name or not job_titles or not locations:
         logger.error("Missing campaign name, job titles, or locations")
         return False
