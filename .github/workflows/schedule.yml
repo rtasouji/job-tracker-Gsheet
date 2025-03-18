@@ -1,7 +1,7 @@
-name: Run Streamlit Job Daily
+name: Run Streamlit Job Weekly
 on:
   schedule:
-    - cron: '0 6 * * *'  # Runs daily at 6 AM UTC
+    - cron: '0 6 * * 1'  # Runs weekly on Monday at 6 AM UTC
   workflow_dispatch:  # Allows manual triggering
 
 jobs:
