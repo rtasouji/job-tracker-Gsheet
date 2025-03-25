@@ -98,6 +98,52 @@ def initialize_sheets():
         logger.error(f"Error initializing Google Sheets: {e}")
         raise
 
+# Modified function to fetch campaigns for any country
+def get_campaigns_by_country(country):
+    try:
+        worksheet = worksheet_cache["campaigns"]
+        rate_limit()
+        data = worksheet.get_all_records()
+        country_campaigns = [row["campaign_name"] for row in data if row.get("country", "US").upper() == country.upper()]
+        logger.info(f"Found {len(country_campaigns)} campaigns for country '{country}': {country_campaigns}")
+        return country_campaigns
+    except Exception as e:
+        logger.error(f"Error fetching campaigns for country '{country}': {e}")
+        return []
+
+# Modified function to fetch data for all campaigns in a given country
+def fetch_campaigns_by_country(country):
+    try:
+        country_campaigns = get_campaigns_by_country(country)
+        if not country_campaigns:
+            logger.warning(f"No campaigns found for country '{country}' to process")
+            return False, []
+
+        successful_campaigns = []
+        total_campaigns = len(country_campaigns)
+        progress_bar = st.progress(0)  # Add a progress bar in the UI
+        for i, campaign_name in enumerate(country_campaigns):
+            logger.info(f"Processing campaign: {campaign_name} for country '{country}'")
+            try:
+                sov_data, appearances, avg_v_rank, avg_h_rank, single_link, _ = compute_sov(campaign_name)
+                save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name, country)
+                successful_campaigns.append(campaign_name)
+                logger.info(f"Successfully processed campaign: {campaign_name}")
+            except Exception as e:
+                logger.error(f"Failed to process campaign '{campaign_name}': {e}")
+                continue
+            # Update the progress bar
+            progress = (i + 1) / total_campaigns
+            progress_bar.progress(progress)
+
+        # After processing all campaigns, update the totals
+        compute_and_store_total_data()
+        logger.info(f"Processed {len(successful_campaigns)}/{len(country_campaigns)} campaigns for country '{country}' successfully")
+        return True, successful_campaigns
+    except Exception as e:
+        logger.error(f"Error in fetch_campaigns_by_country for country '{country}': {e}")
+        return False, []
+
 def load_jobs(campaign_name):
     try:
         worksheet = worksheet_cache["campaigns"]
@@ -237,7 +283,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         for domain in sov_data:
             sov = sov_data[domain] if pd.notna(sov_data[domain]) else 0
             avg_v = avg_v_rank.get(domain, 0) if pd.notna(avg_v_rank.get(domain, 0)) else 0
-            avg_h = avg_h_rank.get(domain, 0) if pd.notna(avg_h_rank.get(domain, 0)) else 0
+            avg_h = avg_v_rank.get(domain, 0) if pd.notna(avg_h_rank.get(domain, 0)) else 0
             new_rows.append([domain, today, round(float(sov), 2), appearances[domain], 
                             float(avg_v), float(avg_h), campaign_name, country, single_link.get(domain, 0)])
         logger.info(f"New rows to add: {len(new_rows)}")
@@ -512,7 +558,7 @@ def main():
 
         campaigns_data = worksheet_cache["campaigns"].get_all_records()
         campaign_names = [row["campaign_name"] for row in campaigns_data]
-        countries = list(set(row.get("country", "US") for row in campaigns_data))
+        countries = sorted(list(set(row.get("country", "US") for row in campaigns_data)))
         total_options = [f"Total - {country}" for country in countries]
         campaign_name_options = total_options + campaign_names
         selected_campaign_name = st.sidebar.selectbox(
@@ -521,6 +567,21 @@ def main():
             index=0,
             key="campaign_selectbox"
         )
+
+        # Add a country selector and button to fetch all campaigns for the selected country
+        st.sidebar.header("Fetch Campaigns by Country")
+        selected_country = st.sidebar.selectbox(
+            "Select Country to Fetch All Campaigns",
+            countries,
+            key="country_fetch_selectbox"
+        )
+        if st.sidebar.button(f"Fetch All Campaigns for {selected_country}", key="fetch_all_country_button"):
+            with st.spinner(f"Fetching data for all campaigns in {selected_country}..."):
+                success, processed_campaigns = fetch_campaigns_by_country(selected_country)
+            if success:
+                st.success(f"Successfully fetched data for {len(processed_campaigns)} campaigns in {selected_country}: {', '.join(processed_campaigns)}")
+            else:
+                st.error(f"Failed to fetch data for some or all campaigns in {selected_country}. Check logs for details.")
 
         if st.button("Fetch & Store Data", key="fetch_store_button"):
             if selected_campaign_name.startswith("Total - "):
@@ -648,14 +709,24 @@ def main():
             st.write("No campaigns created yet.")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "github":
-        campaign_name = sys.argv[2] if len(sys.argv) > 2 else "default"
-        logger.info(f"Running automated fetch & store process for campaign: {campaign_name}")
-        initialize_sheets()
-        sov_data, appearances, avg_v_rank, avg_h_rank, single_link, country = compute_sov(campaign_name)
-        save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name, country)
-        check_data_stored(campaign_name)
-        compute_and_store_total_data()
-        logger.info("Data processing completed for GitHub run")
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "github":
+            campaign_name = sys.argv[2] if len(sys.argv) > 2 else "default"
+            logger.info(f"Running automated fetch & store process for campaign: {campaign_name}")
+            initialize_sheets()
+            sov_data, appearances, avg_v_rank, avg_h_rank, single_link, country = compute_sov(campaign_name)
+            save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name, country)
+            check_data_stored(campaign_name)
+            compute_and_store_total_data()
+            logger.info("Data processing completed for GitHub run")
+        elif sys.argv[1] == "all_country" and len(sys.argv) > 2:  # New command-line option for all campaigns in a country
+            country = sys.argv[2]
+            logger.info(f"Running automated fetch & store process for all campaigns in country: {country}")
+            initialize_sheets()
+            success, processed_campaigns = fetch_campaigns_by_country(country)
+            if success:
+                logger.info(f"Successfully processed {len(processed_campaigns)} campaigns in {country}: {processed_campaigns}")
+            else:
+                logger.error(f"Failed to process some or all campaigns in {country}. Check logs for details.")
     else:
         main()
