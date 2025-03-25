@@ -45,6 +45,23 @@ if not CREDS_JSON or not SPREADSHEET_ID or not SERP_API_KEY:
     logger.error(f"Missing environment variables: {', '.join(missing_vars)}")
     raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
 
+# Global cache for worksheet data
+worksheet_cache = {}
+
+# Cache for historical data
+historical_data_cache = {}
+
+# Rate limiting
+last_request_time = 0
+
+def rate_limit():
+    global last_request_time
+    current_time = time.time()
+    time_since_last = current_time - last_request_time
+    if time_since_last < 1:  # Ensure at least 1 second between requests
+        time.sleep(1 - time_since_last)
+    last_request_time = time.time()
+
 def get_sheets_client():
     try:
         creds = ServiceAccountCredentials.from_json_keyfile_dict(CREDS_JSON, SCOPE)
@@ -55,31 +72,35 @@ def get_sheets_client():
         raise
 
 def get_worksheet(client, sheet_name):
-    spreadsheet = client.open_by_key(SPREADSHEET_ID)
     try:
-        worksheet = spreadsheet.worksheet(sheet_name)
-        logger.info(f"Accessed existing worksheet: {sheet_name}")
-        return worksheet
-    except gspread.WorksheetNotFound:
-        logger.info(f"Worksheet {sheet_name} not found, creating it")
-        worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
-        worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
-        return worksheet
+        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        try:
+            worksheet = spreadsheet.worksheet(sheet_name)
+            logger.info(f"Accessed existing worksheet: {sheet_name}")
+            return worksheet
+        except gspread.WorksheetNotFound:
+            logger.info(f"Worksheet {sheet_name} not found, creating it")
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
+            worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
+            return worksheet
+    except Exception as e:
+        logger.error(f"Error accessing worksheet '{sheet_name}': {e}")
+        raise
 
 def initialize_sheets():
     try:
         client = get_sheets_client()
-        get_worksheet(client, "share_of_voice")
-        get_worksheet(client, "campaigns")
-        logger.info("Google Sheets initialized")
+        # Cache the worksheets
+        worksheet_cache["campaigns"] = get_worksheet(client, "campaigns")
+        worksheet_cache["share_of_voice"] = get_worksheet(client, "share_of_voice")
+        logger.info("Google Sheets initialized successfully")
     except Exception as e:
-        logger.error(f"Error initializing Sheets: {e}")
+        logger.error(f"Error initializing Google Sheets: {e}")
         raise
 
 def load_jobs(campaign_name):
     try:
-        client = get_sheets_client()
-        worksheet = get_worksheet(client, "campaigns")
+        worksheet = worksheet_cache["campaigns"]
         data = worksheet.get_all_records()
         campaign_data = next((row for row in data if row["campaign_name"] == campaign_name), None)
         
@@ -89,7 +110,7 @@ def load_jobs(campaign_name):
         
         job_titles = json.loads(campaign_data["job_titles"]) if campaign_data["job_titles"] else []
         locations = json.loads(campaign_data["locations"]) if campaign_data["locations"] else []
-        country = campaign_data.get("country", "US")  # Default to US if not specified
+        country = campaign_data.get("country", "US")
         
         if len(job_titles) != len(locations):
             logger.error(f"Mismatch between job titles ({len(job_titles)}) and locations ({len(locations)}) for campaign '{campaign_name}'")
@@ -127,6 +148,15 @@ def get_google_jobs_results(query, location):
         logger.error(f"SerpAPI request failed: {e}")
         return []
 
+def extract_domain(url):
+    try:
+        extracted = tldextract.extract(url)
+        domain = f"{extracted.domain}.{extracted.suffix}"
+        return domain
+    except Exception as e:
+        logger.error(f"Error extracting domain from URL '{url}': {e}")
+        return ""
+
 def compute_sov(campaign_name):
     logger.info(f"Starting compute_sov for campaign '{campaign_name}'")
     domain_sov = defaultdict(float)
@@ -139,9 +169,9 @@ def compute_sov(campaign_name):
     jobs_data = load_jobs(campaign_name)
     if not jobs_data:
         logger.warning(f"No job data for campaign '{campaign_name}'")
-        return {}, {}, {}, {}, {}, "US"  # Default country if no data
+        return {}, {}, {}, {}, {}, "US"
 
-    country = jobs_data[0]["country"] if jobs_data else "US"  # Get country from jobs data
+    country = jobs_data[0]["country"] if jobs_data else "US"
     for job_query in jobs_data:
         job_title = job_query["job_title"]
         location = job_query["location"]
@@ -187,11 +217,11 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         return
     
     try:
-        client = get_sheets_client()
-        worksheet = get_worksheet(client, "share_of_voice")
+        worksheet = worksheet_cache["share_of_voice"]
         today = datetime.date.today().isoformat()
         logger.info(f"Saving data for campaign '{campaign_name}' on {today}")
         
+        rate_limit()
         all_data = worksheet.get_all_records()
         df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         logger.info(f"Existing data: {len(df)} rows")
@@ -217,6 +247,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         logger.info(f"Total rows to write: {len(updated_data)}")
         
         if updated_data:
+            rate_limit()
             worksheet.clear()
             worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
             worksheet.append_rows(updated_data)
@@ -229,10 +260,10 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
 
 def get_historical_data(start_date, end_date, campaign_name):
     try:
-        client = get_sheets_client()
-        worksheet = get_worksheet(client, "share_of_voice")
+        worksheet = worksheet_cache["share_of_voice"]
+        rate_limit()
         data = worksheet.get_all_records()
-        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
+        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         if "single_link" not in df.columns:
             df["single_link"] = 0
         
@@ -267,9 +298,14 @@ def get_historical_data(start_date, end_date, campaign_name):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 def get_total_historical_data(start_date, end_date, country):
+    cache_key = f"{country}_{start_date}_{end_date}"
+    if cache_key in historical_data_cache:
+        logger.info(f"Using cached historical data for {cache_key}")
+        return historical_data_cache[cache_key]
+
     try:
-        client = get_sheets_client()
-        worksheet = get_worksheet(client, "share_of_voice")
+        worksheet = worksheet_cache["share_of_voice"]
+        rate_limit()
         data = worksheet.get_all_records()
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         
@@ -292,6 +328,7 @@ def get_total_historical_data(start_date, end_date, country):
             most_recent_date = df_sov.columns[-1]
             df_sov = df_sov.sort_values(by=most_recent_date, ascending=False)
         
+        historical_data_cache[cache_key] = (df_sov, df_metrics, df_appearances)
         return df_sov, df_metrics, df_appearances
     except Exception as e:
         logger.error(f"Error in get_total_historical_data for country '{country}': {e}")
@@ -299,8 +336,8 @@ def get_total_historical_data(start_date, end_date, country):
 
 def compute_and_store_total_data():
     try:
-        client = get_sheets_client()
-        worksheet = get_worksheet(client, "share_of_voice")
+        worksheet = worksheet_cache["share_of_voice"]
+        rate_limit()
         data = worksheet.get_all_records()
         if not data:
             logger.warning("No data in 'share_of_voice' to compute totals")
@@ -313,7 +350,6 @@ def compute_and_store_total_data():
             logger.warning(f"No non-Total data to aggregate for {today}")
             return
         
-        # Group by country
         grouped = df.groupby("country")
         for country, country_df in grouped:
             domain_sov = defaultdict(float)
@@ -325,13 +361,13 @@ def compute_and_store_total_data():
             for _, row in country_df.iterrows():
                 domain = row["domain"]
                 sov = row["sov"] if pd.notna(row["sov"]) else 0
-                domain_sov[domain] += float(sov)
                 domain_appearances[domain] += int(row["appearances"])
                 v_rank = row["avg_v_rank"] if pd.notna(row["avg_v_rank"]) else 0
                 h_rank = row["avg_h_rank"] if pd.notna(row["avg_h_rank"]) else 0
                 domain_v_rank[domain].append(float(v_rank))
                 domain_h_rank[domain].append(float(h_rank))
                 domain_single_link[domain] += int(row["single_link"])
+                domain_sov[domain] += float(sov)
 
             total_avg_v_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_v_rank.items() if ranks}
             total_avg_h_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_h_rank.items() if ranks}
@@ -351,8 +387,7 @@ def create_or_update_campaign(campaign_name, job_titles, locations, country="US"
         return False
     
     try:
-        client = get_sheets_client()
-        worksheet = get_worksheet(client, "campaigns")
+        worksheet = worksheet_cache["campaigns"]
         data = worksheet.get_all_records()
         existing = next((row for row in data if row["campaign_name"] == campaign_name), None)
         
@@ -360,15 +395,17 @@ def create_or_update_campaign(campaign_name, job_titles, locations, country="US"
             "campaign_name": campaign_name,
             "job_titles": json.dumps(job_titles),
             "locations": json.dumps(locations),
-            "country": country,  # New field
+            "country": country,
             "created_at": datetime.datetime.now().isoformat()
         }
         
         if existing:
             row_index = data.index(existing) + 2
+            rate_limit()
             worksheet.update(f"A{row_index}:E{row_index}", [list(row_data.values())])
             logger.info(f"Updated campaign '{campaign_name}'")
         else:
+            rate_limit()
             worksheet.append_row(list(row_data.values()))
             logger.info(f"Created campaign '{campaign_name}'")
         return True
@@ -378,23 +415,27 @@ def create_or_update_campaign(campaign_name, job_titles, locations, country="US"
 
 def delete_campaign(campaign_name):
     try:
-        client = get_sheets_client()
-        sov_worksheet = get_worksheet(client, "share_of_voice")
-        campaigns_worksheet = get_worksheet(client, "campaigns")
+        sov_worksheet = worksheet_cache["share_of_voice"]
+        campaigns_worksheet = worksheet_cache["campaigns"]
         
+        rate_limit()
         sov_data = sov_worksheet.get_all_records()
         sov_rows_to_keep = [row for row in sov_data if row["campaign_name"] != campaign_name]
         if len(sov_rows_to_keep) < len(sov_data):
+            rate_limit()
             sov_worksheet.clear()
-            sov_worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
+            sov_worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
             if sov_rows_to_keep:
+                rate_limit()
                 sov_worksheet.append_rows([list(row.values()) for row in sov_rows_to_keep])
             logger.info(f"Deleted records for campaign '{campaign_name}' from share_of_voice")
 
+        rate_limit()
         campaigns_data = campaigns_worksheet.get_all_records()
         campaign_row = next((row for row in campaigns_data if row["campaign_name"] == campaign_name), None)
         if campaign_row:
             row_index = campaigns_data.index(campaign_row) + 2
+            rate_limit()
             campaigns_worksheet.delete_rows(row_index)
             logger.info(f"Campaign '{campaign_name}' deleted from campaigns")
     except Exception as e:
@@ -407,7 +448,7 @@ def bulk_create_campaigns(df):
             job_titles = group["Keyword"].tolist()
             locations = group["Location"].fillna("").tolist()
             countries = group["Country"].fillna("US").tolist()
-            country = countries[0]  # Assume all rows in the group have the same country
+            country = countries[0]
             if len(job_titles) != len(locations):
                 logger.error(f"Mismatch in job titles and locations for campaign '{campaign_name}'")
                 continue
@@ -420,8 +461,8 @@ def bulk_create_campaigns(df):
 
 def check_data_stored(campaign_name):
     try:
-        client = get_sheets_client()
-        worksheet = get_worksheet(client, "share_of_voice")
+        worksheet = worksheet_cache["share_of_voice"]
+        rate_limit()
         data = worksheet.get_all_records()
         today = datetime.date.today().isoformat()
         campaign_data = [row for row in data if row["campaign_name"] == campaign_name and row["date"] == today]
@@ -436,11 +477,9 @@ def main():
     initialize_sheets()
     st.title("Google for Jobs Visibility Tracker")
 
-    # Initialize session state for refreshing the campaign list
     if "refresh_campaigns" not in st.session_state:
         st.session_state.refresh_campaigns = False
 
-    # Sidebar navigation selectbox with a unique key
     page = st.sidebar.selectbox(
         "Navigate",
         ["Visibility Tracker", "Campaign Management"],
@@ -471,9 +510,7 @@ def main():
             st.sidebar.error("End date must be after start date!")
             return
 
-        client = get_sheets_client()
-        worksheet = get_worksheet(client, "campaigns")
-        campaigns_data = worksheet.get_all_records()
+        campaigns_data = worksheet_cache["campaigns"].get_all_records()
         campaign_names = [row["campaign_name"] for row in campaigns_data]
         countries = list(set(row.get("country", "US") for row in campaigns_data))
         total_options = [f"Total - {country}" for country in countries]
@@ -494,8 +531,8 @@ def main():
                 save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, selected_campaign_name, country)
                 compute_and_store_total_data()
                 st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Totals updated!")
+            historical_data_cache.clear()
 
-        # Fetch historical data (needed for all charts and tables)
         if selected_campaign_name.startswith("Total - "):
             country = selected_campaign_name.replace("Total - ", "")
             df_sov, df_metrics, df_appearances = get_total_historical_data(start_date, end_date, country)
@@ -505,7 +542,6 @@ def main():
         if not df_sov.empty:
             top_domains = df_sov.iloc[:15]
 
-            # Section: Appearances Over Time (chart)
             st.write("### Appearances Over Time")
             top_domains_appearances = df_appearances.loc[top_domains.index]
             fig2 = go.Figure()
@@ -514,19 +550,14 @@ def main():
             fig2.update_layout(title=f"Domain Appearances Over Time for {selected_campaign_name}", xaxis_title="Date", yaxis_title="Number of Appearances")
             st.plotly_chart(fig2)
 
-            # Section: Additional Metrics Over Time (table, sorted by appearances on the last date)
             st.write("### Additional Metrics Over Time")
             if not df_metrics.empty:
-                # Get the last date from the first level of the column index (dates)
-                last_date = df_metrics.columns.get_level_values(0)[-1]  # First level is dates after swaplevel()
-                # Sort df_metrics by the appearances on the last date in descending order
+                last_date = df_metrics.columns.get_level_values(0)[-1]
                 df_metrics_sorted = df_metrics.sort_values(by=(last_date, "appearances"), ascending=False)
-                # Display the sorted table
                 st.dataframe(df_metrics_sorted.style.format("{:.2f}"))
             else:
                 st.write("No additional metrics data available.")
 
-            # Section: Visibility Over Time (chart and table)
             st.write("### Visibility Over Time")
             fig1 = go.Figure()
             for domain in top_domains.index:
@@ -589,8 +620,7 @@ def main():
                 st.error("CSV must contain 'Campaign', 'Keyword', 'Location', and 'Country' columns!")
 
         st.subheader("Delete a Campaign")
-        client = get_sheets_client()
-        worksheet = get_worksheet(client, "campaigns")
+        worksheet = worksheet_cache["campaigns"]
         campaign_names = [row["campaign_name"] for row in worksheet.get_all_records()]
         if campaign_names:
             selected_campaign_name = st.selectbox(
@@ -604,14 +634,13 @@ def main():
         else:
             st.write("No campaigns available to delete.")
 
-        # Refresh the campaign list if needed
         if st.session_state.refresh_campaigns:
             client = get_sheets_client()
-            worksheet = get_worksheet(client, "campaigns")
+            worksheet_cache["campaigns"] = get_worksheet(client, "campaigns")
             st.session_state.refresh_campaigns = False
 
         st.subheader("Existing Campaigns")
-        campaigns = worksheet.get_all_records()
+        campaigns = worksheet_cache["campaigns"].get_all_records()
         if campaigns:
             for campaign in campaigns:
                 st.write(f"- **Campaign Name:** {campaign['campaign_name']}, **Country:** {campaign.get('country', 'US')}, **Created At:** {campaign['created_at']}")
