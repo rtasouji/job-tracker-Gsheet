@@ -54,6 +54,10 @@ historical_data_cache = {}
 # Rate limiting
 last_request_time = 0
 
+# Hardcoded admin credentials (you can change these or load from environment variables)
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "securepassword123")
+
 def rate_limit():
     global last_request_time
     current_time = time.time()
@@ -98,7 +102,6 @@ def initialize_sheets():
         logger.error(f"Error initializing Google Sheets: {e}")
         raise
 
-# Modified function to fetch campaigns for any country
 def get_campaigns_by_country(country):
     try:
         worksheet = worksheet_cache["campaigns"]
@@ -111,7 +114,6 @@ def get_campaigns_by_country(country):
         logger.error(f"Error fetching campaigns for country '{country}': {e}")
         return []
 
-# Modified function to fetch data for all campaigns in a given country
 def fetch_campaigns_by_country(country):
     try:
         country_campaigns = get_campaigns_by_country(country)
@@ -121,7 +123,7 @@ def fetch_campaigns_by_country(country):
 
         successful_campaigns = []
         total_campaigns = len(country_campaigns)
-        progress_bar = st.progress(0)  # Add a progress bar in the UI
+        progress_bar = st.progress(0)
         for i, campaign_name in enumerate(country_campaigns):
             logger.info(f"Processing campaign: {campaign_name} for country '{country}'")
             try:
@@ -132,11 +134,9 @@ def fetch_campaigns_by_country(country):
             except Exception as e:
                 logger.error(f"Failed to process campaign '{campaign_name}': {e}")
                 continue
-            # Update the progress bar
             progress = (i + 1) / total_campaigns
             progress_bar.progress(progress)
 
-        # After processing all campaigns, update the totals
         compute_and_store_total_data()
         logger.info(f"Processed {len(successful_campaigns)}/{len(country_campaigns)} campaigns for country '{country}' successfully")
         return True, successful_campaigns
@@ -283,7 +283,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         for domain in sov_data:
             sov = sov_data[domain] if pd.notna(sov_data[domain]) else 0
             avg_v = avg_v_rank.get(domain, 0) if pd.notna(avg_v_rank.get(domain, 0)) else 0
-            avg_h = avg_v_rank.get(domain, 0) if pd.notna(avg_h_rank.get(domain, 0)) else 0
+            avg_h = avg_h_rank.get(domain, 0) if pd.notna(avg_h_rank.get(domain, 0)) else 0
             new_rows.append([domain, today, round(float(sov), 2), appearances[domain], 
                             float(avg_v), float(avg_h), campaign_name, country, single_link.get(domain, 0)])
         logger.info(f"New rows to add: {len(new_rows)}")
@@ -519,12 +519,42 @@ def check_data_stored(campaign_name):
     except Exception as e:
         logger.error(f"Error checking data for '{campaign_name}': {e}")
 
+# Authentication function
+def check_authentication():
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    return st.session_state.authenticated
+
+def login():
+    st.sidebar.header("Admin Login")
+    username = st.sidebar.text_input("Username", key="login_username")
+    password = st.sidebar.text_input("Password", type="password", key="login_password")
+    if st.sidebar.button("Login", key="login_button"):
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            st.session_state.authenticated = True
+            st.sidebar.success("Logged in successfully!")
+            st.experimental_rerun()  # Refresh the app to reflect the authenticated state
+        else:
+            st.sidebar.error("Invalid username or password")
+
+def logout():
+    if st.sidebar.button("Logout", key="logout_button"):
+        st.session_state.authenticated = False
+        st.experimental_rerun()
+
 def main():
     initialize_sheets()
     st.title("Google for Jobs Visibility Tracker")
 
     if "refresh_campaigns" not in st.session_state:
         st.session_state.refresh_campaigns = False
+
+    # Show login form if not authenticated
+    if not check_authentication():
+        login()
+        st.sidebar.info("Please log in to access data fetching features.")
+    else:
+        logout()
 
     page = st.sidebar.selectbox(
         "Navigate",
@@ -568,31 +598,32 @@ def main():
             key="campaign_selectbox"
         )
 
-        # Add a country selector and button to fetch all campaigns for the selected country
-        st.sidebar.header("Fetch Campaigns by Country")
-        selected_country = st.sidebar.selectbox(
-            "Select Country to Fetch All Campaigns",
-            countries,
-            key="country_fetch_selectbox"
-        )
-        if st.sidebar.button(f"Fetch All Campaigns for {selected_country}", key="fetch_all_country_button"):
-            with st.spinner(f"Fetching data for all campaigns in {selected_country}..."):
-                success, processed_campaigns = fetch_campaigns_by_country(selected_country)
-            if success:
-                st.success(f"Successfully fetched data for {len(processed_campaigns)} campaigns in {selected_country}: {', '.join(processed_campaigns)}")
-            else:
-                st.error(f"Failed to fetch data for some or all campaigns in {selected_country}. Check logs for details.")
+        # Show fetch buttons only if authenticated
+        if check_authentication():
+            st.sidebar.header("Fetch Campaigns by Country")
+            selected_country = st.sidebar.selectbox(
+                "Select Country to Fetch All Campaigns",
+                countries,
+                key="country_fetch_selectbox"
+            )
+            if st.sidebar.button(f"Fetch All Campaigns for {selected_country}", key="fetch_all_country_button"):
+                with st.spinner(f"Fetching data for all campaigns in {selected_country}..."):
+                    success, processed_campaigns = fetch_campaigns_by_country(selected_country)
+                if success:
+                    st.success(f"Successfully fetched data for {len(processed_campaigns)} campaigns in {selected_country}: {', '.join(processed_campaigns)}")
+                else:
+                    st.error(f"Failed to fetch data for some or all campaigns in {selected_country}. Check logs for details.")
 
-        if st.button("Fetch & Store Data", key="fetch_store_button"):
-            if selected_campaign_name.startswith("Total - "):
-                compute_and_store_total_data()
-                st.success("Total data across all campaigns stored successfully!")
-            else:
-                sov_data, appearances, avg_v_rank, avg_h_rank, single_link, country = compute_sov(selected_campaign_name)
-                save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, selected_campaign_name, country)
-                compute_and_store_total_data()
-                st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Totals updated!")
-            historical_data_cache.clear()
+            if st.button("Fetch & Store Data", key="fetch_store_button"):
+                if selected_campaign_name.startswith("Total - "):
+                    compute_and_store_total_data()
+                    st.success("Total data across all campaigns stored successfully!")
+                else:
+                    sov_data, appearances, avg_v_rank, avg_h_rank, single_link, country = compute_sov(selected_campaign_name)
+                    save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, selected_campaign_name, country)
+                    compute_and_store_total_data()
+                    st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Totals updated!")
+                historical_data_cache.clear()
 
         if selected_campaign_name.startswith("Total - "):
             country = selected_campaign_name.replace("Total - ", "")
@@ -719,7 +750,7 @@ if __name__ == "__main__":
             check_data_stored(campaign_name)
             compute_and_store_total_data()
             logger.info("Data processing completed for GitHub run")
-        elif sys.argv[1] == "all_country" and len(sys.argv) > 2:  # New command-line option for all campaigns in a country
+        elif sys.argv[1] == "all_country" and len(sys.argv) > 2:
             country = sys.argv[2]
             logger.info(f"Running automated fetch & store process for all campaigns in country: {country}")
             initialize_sheets()
