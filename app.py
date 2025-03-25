@@ -517,10 +517,10 @@ def main():
             # Section: Additional Metrics Over Time (table, sorted by appearances on the last date)
             st.write("### Additional Metrics Over Time")
             if not df_metrics.empty:
-                # Identify the last available date for appearances
-                last_date = df_metrics["appearances"].columns[-1]  # Get the last date column
+                # Get the last date from the first level of the column index (dates)
+                last_date = df_metrics.columns.get_level_values(0)[-1]  # First level is dates after swaplevel()
                 # Sort df_metrics by the appearances on the last date in descending order
-                df_metrics_sorted = df_metrics.sort_values(by=("appearances", last_date), ascending=False)
+                df_metrics_sorted = df_metrics.sort_values(by=(last_date, "appearances"), ascending=False)
                 # Display the sorted table
                 st.dataframe(df_metrics_sorted.style.format("{:.2f}"))
             else:
