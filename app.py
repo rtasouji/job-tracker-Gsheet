@@ -89,13 +89,14 @@ def load_jobs(campaign_name):
         
         job_titles = json.loads(campaign_data["job_titles"]) if campaign_data["job_titles"] else []
         locations = json.loads(campaign_data["locations"]) if campaign_data["locations"] else []
+        country = campaign_data.get("country", "US")  # Default to US if not specified
         
         if len(job_titles) != len(locations):
             logger.error(f"Mismatch between job titles ({len(job_titles)}) and locations ({len(locations)}) for campaign '{campaign_name}'")
             return []
         
-        logger.info(f"Loaded {len(job_titles)} job queries for campaign '{campaign_name}'")
-        return [{"job_title": title, "location": loc} for title, loc in zip(job_titles, locations)]
+        logger.info(f"Loaded {len(job_titles)} job queries for campaign '{campaign_name}' in country '{country}'")
+        return [{"job_title": title, "location": loc, "country": country} for title, loc in zip(job_titles, locations)]
     except Exception as e:
         logger.error(f"Error in load_jobs for campaign '{campaign_name}': {e}")
         return []
@@ -138,8 +139,9 @@ def compute_sov(campaign_name):
     jobs_data = load_jobs(campaign_name)
     if not jobs_data:
         logger.warning(f"No job data for campaign '{campaign_name}'")
-        return {}, {}, {}, {}, {}
+        return {}, {}, {}, {}, {}, "US"  # Default country if no data
 
+    country = jobs_data[0]["country"] if jobs_data else "US"  # Get country from jobs data
     for job_query in jobs_data:
         job_title = job_query["job_title"]
         location = job_query["location"]
@@ -177,14 +179,9 @@ def compute_sov(campaign_name):
     domain_avg_h_rank = {domain: round(sum(hr) / len(hr), 2) for domain, hr in domain_h_rank.items() if hr}
     
     logger.info(f"Computed SoV for '{campaign_name}': {len(domain_sov)} domains, {sum(domain_single_link.values())} single-link appearances")
-    return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank, domain_single_link
+    return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank, domain_single_link, country
 
-def extract_domain(url):
-    extracted = tldextract.extract(url)
-    domain = f"{extracted.domain}.{extracted.suffix}" if extracted.suffix else extracted.domain
-    return domain.lower().replace("www.", "")
-
-def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name):
+def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name, country):
     if not sov_data:
         logger.warning(f"No SoV data to save for campaign '{campaign_name}'")
         return
@@ -196,9 +193,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         logger.info(f"Saving data for campaign '{campaign_name}' on {today}")
         
         all_data = worksheet.get_all_records()
-        df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
-        if "single_link" not in df.columns:
-            df["single_link"] = 0
+        df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         logger.info(f"Existing data: {len(df)} rows")
         
         if not df.empty:
@@ -214,7 +209,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
             avg_v = avg_v_rank.get(domain, 0) if pd.notna(avg_v_rank.get(domain, 0)) else 0
             avg_h = avg_h_rank.get(domain, 0) if pd.notna(avg_h_rank.get(domain, 0)) else 0
             new_rows.append([domain, today, round(float(sov), 2), appearances[domain], 
-                             float(avg_v), float(avg_h), campaign_name, single_link.get(domain, 0)])
+                            float(avg_v), float(avg_h), campaign_name, country, single_link.get(domain, 0)])
         logger.info(f"New rows to add: {len(new_rows)}")
         
         updated_data = df_to_keep.values.tolist() if not df_to_keep.empty else []
@@ -223,7 +218,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         
         if updated_data:
             worksheet.clear()
-            worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
+            worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
             worksheet.append_rows(updated_data)
             logger.info(f"Replaced {len(new_rows)} rows for '{campaign_name}' on {today}")
         else:
@@ -271,21 +266,19 @@ def get_historical_data(start_date, end_date, campaign_name):
         logger.error(f"Error in get_historical_data for '{campaign_name}': {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-def get_total_historical_data(start_date, end_date):
+def get_total_historical_data(start_date, end_date, country):
     try:
         client = get_sheets_client()
         worksheet = get_worksheet(client, "share_of_voice")
         data = worksheet.get_all_records()
-        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
-        if "single_link" not in df.columns:
-            df["single_link"] = 0
+        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         
-        df = df[df["campaign_name"] == "Total"]
+        df = df[(df["campaign_name"] == f"Total - {country}") & (df["country"] == country)]
         df["date"] = pd.to_datetime(df["date"]).dt.date
         df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
         
         if df.empty:
-            logger.info(f"No 'Total' historical data in range {start_date} to {end_date}")
+            logger.info(f"No 'Total - {country}' historical data in range {start_date} to {end_date}")
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
         df_agg = df[["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "single_link"]]
@@ -301,7 +294,7 @@ def get_total_historical_data(start_date, end_date):
         
         return df_sov, df_metrics, df_appearances
     except Exception as e:
-        logger.error(f"Error in get_total_historical_data: {e}")
+        logger.error(f"Error in get_total_historical_data for country '{country}': {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 def compute_and_store_total_data():
@@ -313,47 +306,48 @@ def compute_and_store_total_data():
             logger.warning("No data in 'share_of_voice' to compute totals")
             return
         
-        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "single_link"])
-        if "single_link" not in df.columns:
-            df["single_link"] = 0
-        
+        df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         today = datetime.date.today().isoformat()
-        df = df[(df["date"] == today) & (df["campaign_name"] != "Total")]
+        df = df[(df["date"] == today) & (~df["campaign_name"].str.startswith("Total - "))]
         if df.empty:
             logger.warning(f"No non-Total data to aggregate for {today}")
             return
         
-        domain_sov = defaultdict(float)
-        domain_appearances = defaultdict(int)
-        domain_v_rank = defaultdict(list)
-        domain_h_rank = defaultdict(list)
-        domain_single_link = defaultdict(int)
+        # Group by country
+        grouped = df.groupby("country")
+        for country, country_df in grouped:
+            domain_sov = defaultdict(float)
+            domain_appearances = defaultdict(int)
+            domain_v_rank = defaultdict(list)
+            domain_h_rank = defaultdict(list)
+            domain_single_link = defaultdict(int)
 
-        for _, row in df.iterrows():
-            domain = row["domain"]
-            sov = row["sov"] if pd.notna(row["sov"]) else 0
-            domain_sov[domain] += float(sov)
-            domain_appearances[domain] += int(row["appearances"])
-            v_rank = row["avg_v_rank"] if pd.notna(row["avg_v_rank"]) else 0
-            h_rank = row["avg_h_rank"] if pd.notna(row["avg_h_rank"]) else 0
-            domain_v_rank[domain].append(float(v_rank))
-            domain_h_rank[domain].append(float(h_rank))
-            domain_single_link[domain] += int(row["single_link"])
+            for _, row in country_df.iterrows():
+                domain = row["domain"]
+                sov = row["sov"] if pd.notna(row["sov"]) else 0
+                domain_sov[domain] += float(sov)
+                domain_appearances[domain] += int(row["appearances"])
+                v_rank = row["avg_v_rank"] if pd.notna(row["avg_v_rank"]) else 0
+                h_rank = row["avg_h_rank"] if pd.notna(row["avg_h_rank"]) else 0
+                domain_v_rank[domain].append(float(v_rank))
+                domain_h_rank[domain].append(float(h_rank))
+                domain_single_link[domain] += int(row["single_link"])
 
-        total_avg_v_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_v_rank.items() if ranks}
-        total_avg_h_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_h_rank.items() if ranks}
-        total_sov = sum(domain_sov.values())
-        if total_sov > 0:
-            domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
+            total_avg_v_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_v_rank.items() if ranks}
+            total_avg_h_rank = {domain: round(sum(ranks) / len(ranks), 2) for domain, ranks in domain_h_rank.items() if ranks}
+            total_sov = sum(domain_sov.values())
+            if total_sov > 0:
+                domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
 
-        save_to_db(domain_sov, domain_appearances, total_avg_v_rank, total_avg_h_rank, domain_single_link, "Total")
-        logger.info(f"Total data computed and stored for {today} based on {len(df['campaign_name'].unique())} campaign(s)")
+            total_campaign_name = f"Total - {country}"
+            save_to_db(domain_sov, domain_appearances, total_avg_v_rank, total_avg_h_rank, domain_single_link, total_campaign_name, country)
+            logger.info(f"Total data computed and stored for {total_campaign_name} on {today} based on {len(country_df['campaign_name'].unique())} campaign(s)")
     except Exception as e:
         logger.error(f"Error in compute_and_store_total_data: {e}")
 
-def create_or_update_campaign(campaign_name, job_titles, locations):
-    if not campaign_name or not job_titles or not locations:
-        logger.error("Missing campaign name, job titles, or locations")
+def create_or_update_campaign(campaign_name, job_titles, locations, country="US"):
+    if not campaign_name or not job_titles or not locations or not country:
+        logger.error("Missing campaign name, job titles, locations, or country")
         return False
     
     try:
@@ -366,12 +360,13 @@ def create_or_update_campaign(campaign_name, job_titles, locations):
             "campaign_name": campaign_name,
             "job_titles": json.dumps(job_titles),
             "locations": json.dumps(locations),
+            "country": country,  # New field
             "created_at": datetime.datetime.now().isoformat()
         }
         
         if existing:
             row_index = data.index(existing) + 2
-            worksheet.update(f"A{row_index}:D{row_index}", [list(row_data.values())])
+            worksheet.update(f"A{row_index}:E{row_index}", [list(row_data.values())])
             logger.info(f"Updated campaign '{campaign_name}'")
         else:
             worksheet.append_row(list(row_data.values()))
@@ -411,11 +406,13 @@ def bulk_create_campaigns(df):
         for campaign_name, group in grouped:
             job_titles = group["Keyword"].tolist()
             locations = group["Location"].fillna("").tolist()
+            countries = group["Country"].fillna("US").tolist()
+            country = countries[0]  # Assume all rows in the group have the same country
             if len(job_titles) != len(locations):
                 logger.error(f"Mismatch in job titles and locations for campaign '{campaign_name}'")
                 continue
-            if create_or_update_campaign(campaign_name, job_titles, locations):
-                logger.info(f"Bulk created/updated campaign '{campaign_name}' with {len(job_titles)} keywords")
+            if create_or_update_campaign(campaign_name, job_titles, locations, country):
+                logger.info(f"Bulk created/updated campaign '{campaign_name}' with {len(job_titles)} keywords in country '{country}'")
         return True
     except Exception as e:
         logger.error(f"Error in bulk_create_campaigns: {e}")
@@ -458,23 +455,27 @@ def main():
 
         client = get_sheets_client()
         worksheet = get_worksheet(client, "campaigns")
-        campaign_names = [row["campaign_name"] for row in worksheet.get_all_records()]
-        campaign_name_options = ["Total"] + campaign_names
+        campaigns_data = worksheet.get_all_records()
+        campaign_names = [row["campaign_name"] for row in campaigns_data]
+        countries = list(set(row.get("country", "US") for row in campaigns_data))
+        total_options = [f"Total - {country}" for country in countries]
+        campaign_name_options = total_options + campaign_names
         selected_campaign_name = st.sidebar.selectbox("Select Campaign", campaign_name_options, index=0)
 
         if st.button("Fetch & Store Data"):
-            if selected_campaign_name == "Total":
+            if selected_campaign_name.startswith("Total - "):
                 compute_and_store_total_data()
                 st.success("Total data across all campaigns stored successfully!")
             else:
-                sov_data, appearances, avg_v_rank, avg_h_rank, single_link = compute_sov(selected_campaign_name)
-                save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, selected_campaign_name)
+                sov_data, appearances, avg_v_rank, avg_h_rank, single_link, country = compute_sov(selected_campaign_name)
+                save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, selected_campaign_name, country)
                 compute_and_store_total_data()
-                st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Total updated!")
+                st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Totals updated!")
 
         st.write("### Visibility Over Time")
-        if selected_campaign_name == "Total":
-            df_sov, df_metrics, df_appearances = get_total_historical_data(start_date, end_date)
+        if selected_campaign_name.startswith("Total - "):
+            country = selected_campaign_name.replace("Total - ", "")
+            df_sov, df_metrics, df_appearances = get_total_historical_data(start_date, end_date, country)
         else:
             df_sov, df_metrics, df_appearances = get_historical_data(start_date, end_date, selected_campaign_name)
 
@@ -507,27 +508,28 @@ def main():
         campaign_name = st.text_input("Campaign Name (unique identifier)")
         job_titles = st.text_area("Job Titles (one per line)", height=100)
         locations = st.text_area("Locations (one per line, matching job titles)", height=100)
+        country = st.text_input("Country", value="US")  # Default to US
 
         if st.button("Create/Update Campaign"):
             job_titles_list = [title.strip() for title in job_titles.split('\n') if title.strip()]
             locations_list = [loc.strip() for loc in locations.split('\n') if loc.strip()]
             if len(job_titles_list) != len(locations_list):
                 st.error("⚠️ The number of job titles must match the number of locations!")
-            elif create_or_update_campaign(campaign_name, job_titles_list, locations_list):
+            elif create_or_update_campaign(campaign_name, job_titles_list, locations_list, country):
                 st.success(f"Campaign '{campaign_name}' created/updated successfully!")
 
         st.subheader("Bulk Upload Campaigns")
-        uploaded_file = st.file_uploader("Upload CSV (Campaign,Keyword,Location)", type="csv")
+        uploaded_file = st.file_uploader("Upload CSV (Campaign,Keyword,Location,Country)", type="csv")
         if uploaded_file and st.button("Create/Update from CSV"):
             df = pd.read_csv(uploaded_file)
-            if {"Campaign", "Keyword", "Location"}.issubset(df.columns):
+            if {"Campaign", "Keyword", "Location", "Country"}.issubset(df.columns):
                 if bulk_create_campaigns(df):
                     st.success("All campaigns from CSV created/updated successfully!")
                     st.experimental_rerun()
                 else:
                     st.error("Failed to process some campaigns. Check logs for details.")
             else:
-                st.error("CSV must contain 'Campaign', 'Keyword', and 'Location' columns!")
+                st.error("CSV must contain 'Campaign', 'Keyword', 'Location', and 'Country' columns!")
 
         st.subheader("Delete a Campaign")
         client = get_sheets_client()
@@ -545,9 +547,22 @@ def main():
         campaigns = worksheet.get_all_records()
         if campaigns:
             for campaign in campaigns:
-                st.write(f"- **Campaign Name:** {campaign['campaign_name']}, **Created At:** {campaign['created_at']}")
+                st.write(f"- **Campaign Name:** {campaign['campaign_name']}, **Country:** {campaign.get('country', 'US')}, **Created At:** {campaign['created_at']}")
         else:
             st.write("No campaigns created yet.")
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "github":
+        campaign_name = sys.argv[2] if len(sys.argv) > 2 else "default"
+        logger.info(f"Running automated fetch & store process for campaign: {campaign_name}")
+        initialize_sheets()
+        sov_data, appearances, avg_v_rank, avg_h_rank, single_link, country = compute_sov(campaign_name)
+        save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name, country)
+        check_data_stored(campaign_name)
+        compute_and_store_total_data()
+        logger.info("Data processing completed for GitHub run")
+    else:
+        main()
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "github":
