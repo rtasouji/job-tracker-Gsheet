@@ -435,17 +435,7 @@ def check_data_stored(campaign_name):
 def main():
     initialize_sheets()
     st.title("Google for Jobs Visibility Tracker")
-
-    # Initialize session state for refreshing the campaign list
-    if "refresh_campaigns" not in st.session_state:
-        st.session_state.refresh_campaigns = False
-
-    # Sidebar navigation selectbox with a unique key
-    page = st.sidebar.selectbox(
-        "Navigate",
-        ["Visibility Tracker", "Campaign Management"],
-        key="navigate_selectbox"  # Unique key to avoid ID conflicts
-    )
+    page = st.sidebar.selectbox("Navigate", ["Visibility Tracker", "Campaign Management"])
 
     if page == "Visibility Tracker":
         try:
@@ -456,16 +446,8 @@ def main():
         st.sidebar.header("Date Range Selector")
         today = datetime.date.today()
         default_start_date = today - datetime.timedelta(days=30)
-        start_date = st.sidebar.date_input(
-            "Start Date",
-            value=default_start_date,
-            key="start_date_input"  # Unique key
-        )
-        end_date = st.sidebar.date_input(
-            "End Date",
-            value=today,
-            key="end_date_input"  # Unique key
-        )
+        start_date = st.sidebar.date_input("Start Date", value=default_start_date)
+        end_date = st.sidebar.date_input("End Date", value=today)
 
         if start_date > end_date:
             st.sidebar.error("End date must be after start date!")
@@ -478,14 +460,9 @@ def main():
         countries = list(set(row.get("country", "US") for row in campaigns_data))
         total_options = [f"Total - {country}" for country in countries]
         campaign_name_options = total_options + campaign_names
-        selected_campaign_name = st.sidebar.selectbox(
-            "Select Campaign",
-            campaign_name_options,
-            index=0,
-            key="campaign_selectbox"  # Unique key
-        )
+        selected_campaign_name = st.sidebar.selectbox("Select Campaign", campaign_name_options, index=0)
 
-        if st.button("Fetch & Store Data", key="fetch_store_button"):
+        if st.button("Fetch & Store Data"):
             if selected_campaign_name.startswith("Total - "):
                 compute_and_store_total_data()
                 st.success("Total data across all campaigns stored successfully!")
@@ -528,47 +505,27 @@ def main():
         st.header("Campaign Management")
         
         st.subheader("Create a New Campaign")
-        campaign_name = st.text_input(
-            "Campaign Name (unique identifier)",
-            key="campaign_name_input"
-        )
-        job_titles = st.text_area(
-            "Job Titles (one per line)",
-            height=100,
-            key="job_titles_input"
-        )
-        locations = st.text_area(
-            "Locations (one per line, matching job titles)",
-            height=100,
-            key="locations_input"
-        )
-        country = st.text_input(
-            "Country",
-            value="US",
-            key="country_input"
-        )
+        campaign_name = st.text_input("Campaign Name (unique identifier)")
+        job_titles = st.text_area("Job Titles (one per line)", height=100)
+        locations = st.text_area("Locations (one per line, matching job titles)", height=100)
+        country = st.text_input("Country", value="US")  # Default to US
 
-        if st.button("Create/Update Campaign", key="create_update_button"):
+        if st.button("Create/Update Campaign"):
             job_titles_list = [title.strip() for title in job_titles.split('\n') if title.strip()]
             locations_list = [loc.strip() for loc in locations.split('\n') if loc.strip()]
             if len(job_titles_list) != len(locations_list):
                 st.error("⚠️ The number of job titles must match the number of locations!")
             elif create_or_update_campaign(campaign_name, job_titles_list, locations_list, country):
                 st.success(f"Campaign '{campaign_name}' created/updated successfully!")
-                st.session_state.refresh_campaigns = True  # Trigger a refresh
 
         st.subheader("Bulk Upload Campaigns")
-        uploaded_file = st.file_uploader(
-            "Upload CSV (Campaign,Keyword,Location,Country)",
-            type="csv",
-            key="csv_uploader"
-        )
-        if uploaded_file and st.button("Create/Update from CSV", key="bulk_upload_button"):
+        uploaded_file = st.file_uploader("Upload CSV (Campaign,Keyword,Location,Country)", type="csv")
+        if uploaded_file and st.button("Create/Update from CSV"):
             df = pd.read_csv(uploaded_file)
             if {"Campaign", "Keyword", "Location", "Country"}.issubset(df.columns):
                 if bulk_create_campaigns(df):
                     st.success("All campaigns from CSV created/updated successfully!")
-                    st.session_state.refresh_campaigns = True  # Trigger a refresh
+                    st.experimental_rerun()
                 else:
                     st.error("Failed to process some campaigns. Check logs for details.")
             else:
@@ -579,22 +536,12 @@ def main():
         worksheet = get_worksheet(client, "campaigns")
         campaign_names = [row["campaign_name"] for row in worksheet.get_all_records()]
         if campaign_names:
-            selected_campaign_name = st.selectbox(
-                "Choose a campaign to delete",
-                [""] + campaign_names,
-                key="delete_campaign_selectbox"  # Unique key
-            )
-            if selected_campaign_name and st.button(f"Delete {selected_campaign_name}", key=f"delete_button_{selected_campaign_name}"):
+            selected_campaign_name = st.selectbox("Choose a campaign to delete", [""] + campaign_names)
+            if selected_campaign_name and st.button(f"Delete {selected_campaign_name}"):
                 delete_campaign(selected_campaign_name)
-                st.session_state.refresh_campaigns = True  # Trigger a refresh
+                st.experimental_rerun()
         else:
             st.write("No campaigns available to delete.")
-
-        # Refresh the campaign list if needed
-        if st.session_state.refresh_campaigns:
-            client = get_sheets_client()
-            worksheet = get_worksheet(client, "campaigns")
-            st.session_state.refresh_campaigns = False  # Reset the flag
 
         st.subheader("Existing Campaigns")
         campaigns = worksheet.get_all_records()
@@ -611,6 +558,19 @@ if __name__ == "__main__":
         initialize_sheets()
         sov_data, appearances, avg_v_rank, avg_h_rank, single_link, country = compute_sov(campaign_name)
         save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name, country)
+        check_data_stored(campaign_name)
+        compute_and_store_total_data()
+        logger.info("Data processing completed for GitHub run")
+    else:
+        main()
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "github":
+        campaign_name = sys.argv[2] if len(sys.argv) > 2 else "default"
+        logger.info(f"Running automated fetch & store process for campaign: {campaign_name}")
+        initialize_sheets()
+        sov_data, appearances, avg_v_rank, avg_h_rank, single_link = compute_sov(campaign_name)
+        save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name)
         check_data_stored(campaign_name)
         compute_and_store_total_data()
         logger.info("Data processing completed for GitHub run")
