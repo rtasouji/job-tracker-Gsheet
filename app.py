@@ -533,14 +533,14 @@ def login():
         if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
             st.session_state.authenticated = True
             st.sidebar.success("Logged in successfully!")
-            st.experimental_rerun()  # Refresh the app to reflect the authenticated state
+            st.rerun()  # Refresh the app to reflect the authenticated state
         else:
             st.sidebar.error("Invalid username or password")
 
 def logout():
     if st.sidebar.button("Logout", key="logout_button"):
         st.session_state.authenticated = False
-        st.experimental_rerun()
+        st.rerun()
 
 def main():
     initialize_sheets()
