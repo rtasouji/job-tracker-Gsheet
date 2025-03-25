@@ -514,11 +514,19 @@ def main():
             fig2.update_layout(title=f"Domain Appearances Over Time for {selected_campaign_name}", xaxis_title="Date", yaxis_title="Number of Appearances")
             st.plotly_chart(fig2)
 
-            # Section: Additional Metrics Over Time (table)
+            # Section: Additional Metrics Over Time (table, sorted by appearances on the last date)
             st.write("### Additional Metrics Over Time")
-            st.dataframe(df_metrics.style.format("{:.2f}"))
+            if not df_metrics.empty:
+                # Identify the last available date for appearances
+                last_date = df_metrics["appearances"].columns[-1]  # Get the last date column
+                # Sort df_metrics by the appearances on the last date in descending order
+                df_metrics_sorted = df_metrics.sort_values(by=("appearances", last_date), ascending=False)
+                # Display the sorted table
+                st.dataframe(df_metrics_sorted.style.format("{:.2f}"))
+            else:
+                st.write("No additional metrics data available.")
 
-            # Moved Section: Visibility Over Time (chart and table)
+            # Section: Visibility Over Time (chart and table)
             st.write("### Visibility Over Time")
             fig1 = go.Figure()
             for domain in top_domains.index:
