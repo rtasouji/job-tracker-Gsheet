@@ -444,7 +444,7 @@ def main():
     page = st.sidebar.selectbox(
         "Navigate",
         ["Visibility Tracker", "Campaign Management"],
-        key="navigate_selectbox"  # Unique key to avoid ID conflicts
+        key="navigate_selectbox"
     )
 
     if page == "Visibility Tracker":
@@ -459,12 +459,12 @@ def main():
         start_date = st.sidebar.date_input(
             "Start Date",
             value=default_start_date,
-            key="start_date_input"  # Unique key
+            key="start_date_input"
         )
         end_date = st.sidebar.date_input(
             "End Date",
             value=today,
-            key="end_date_input"  # Unique key
+            key="end_date_input"
         )
 
         if start_date > end_date:
@@ -482,7 +482,7 @@ def main():
             "Select Campaign",
             campaign_name_options,
             index=0,
-            key="campaign_selectbox"  # Unique key
+            key="campaign_selectbox"
         )
 
         if st.button("Fetch & Store Data", key="fetch_store_button"):
@@ -495,7 +495,7 @@ def main():
                 compute_and_store_total_data()
                 st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Totals updated!")
 
-        st.write("### Visibility Over Time")
+        # Fetch historical data (needed for all charts and tables)
         if selected_campaign_name.startswith("Total - "):
             country = selected_campaign_name.replace("Total - ", "")
             df_sov, df_metrics, df_appearances = get_total_historical_data(start_date, end_date, country)
@@ -504,14 +504,8 @@ def main():
 
         if not df_sov.empty:
             top_domains = df_sov.iloc[:15]
-            fig1 = go.Figure()
-            for domain in top_domains.index:
-                fig1.add_trace(go.Scatter(x=top_domains.columns, y=top_domains.loc[domain], mode="markers+lines", name=domain))
-            fig1.update_layout(title=f"Domains Visibility Over Time for {selected_campaign_name}", xaxis_title="Date", yaxis_title="Share of Voice (%)")
-            st.plotly_chart(fig1)
-            st.write("#### Table of Visibility Score Data")
-            st.dataframe(df_sov.style.format("{:.2f}"))
 
+            # Section: Appearances Over Time (chart)
             st.write("### Appearances Over Time")
             top_domains_appearances = df_appearances.loc[top_domains.index]
             fig2 = go.Figure()
@@ -519,8 +513,20 @@ def main():
                 fig2.add_trace(go.Scatter(x=top_domains_appearances.columns, y=top_domains_appearances.loc[domain], mode="markers+lines", name=domain))
             fig2.update_layout(title=f"Domain Appearances Over Time for {selected_campaign_name}", xaxis_title="Date", yaxis_title="Number of Appearances")
             st.plotly_chart(fig2)
+
+            # Section: Additional Metrics Over Time (table)
             st.write("### Additional Metrics Over Time")
             st.dataframe(df_metrics.style.format("{:.2f}"))
+
+            # Moved Section: Visibility Over Time (chart and table)
+            st.write("### Visibility Over Time")
+            fig1 = go.Figure()
+            for domain in top_domains.index:
+                fig1.add_trace(go.Scatter(x=top_domains.columns, y=top_domains.loc[domain], mode="markers+lines", name=domain))
+            fig1.update_layout(title=f"Domains Visibility Over Time for {selected_campaign_name}", xaxis_title="Date", yaxis_title="Share of Voice (%)")
+            st.plotly_chart(fig1)
+            st.write("#### Table of Visibility Score Data")
+            st.dataframe(df_sov.style.format("{:.2f}"))
         else:
             st.write(f"No historical data available for the selected date range and {selected_campaign_name}")
 
@@ -555,7 +561,7 @@ def main():
                 st.error("⚠️ The number of job titles must match the number of locations!")
             elif create_or_update_campaign(campaign_name, job_titles_list, locations_list, country):
                 st.success(f"Campaign '{campaign_name}' created/updated successfully!")
-                st.session_state.refresh_campaigns = True  # Trigger a refresh
+                st.session_state.refresh_campaigns = True
 
         st.subheader("Bulk Upload Campaigns")
         uploaded_file = st.file_uploader(
@@ -568,7 +574,7 @@ def main():
             if {"Campaign", "Keyword", "Location", "Country"}.issubset(df.columns):
                 if bulk_create_campaigns(df):
                     st.success("All campaigns from CSV created/updated successfully!")
-                    st.session_state.refresh_campaigns = True  # Trigger a refresh
+                    st.session_state.refresh_campaigns = True
                 else:
                     st.error("Failed to process some campaigns. Check logs for details.")
             else:
@@ -582,11 +588,11 @@ def main():
             selected_campaign_name = st.selectbox(
                 "Choose a campaign to delete",
                 [""] + campaign_names,
-                key="delete_campaign_selectbox"  # Unique key
+                key="delete_campaign_selectbox"
             )
             if selected_campaign_name and st.button(f"Delete {selected_campaign_name}", key=f"delete_button_{selected_campaign_name}"):
                 delete_campaign(selected_campaign_name)
-                st.session_state.refresh_campaigns = True  # Trigger a refresh
+                st.session_state.refresh_campaigns = True
         else:
             st.write("No campaigns available to delete.")
 
@@ -594,7 +600,7 @@ def main():
         if st.session_state.refresh_campaigns:
             client = get_sheets_client()
             worksheet = get_worksheet(client, "campaigns")
-            st.session_state.refresh_campaigns = False  # Reset the flag
+            st.session_state.refresh_campaigns = False
 
         st.subheader("Existing Campaigns")
         campaigns = worksheet.get_all_records()
