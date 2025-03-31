@@ -5,3 +5,4 @@ tldextract
 gspread
 oauth2client
 plotly
+tenacity

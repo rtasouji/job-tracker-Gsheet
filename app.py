@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import logging
 import sys
 import time
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Configure logging
 logging.basicConfig(
@@ -180,18 +181,33 @@ def get_google_jobs_results(query, location):
             "api_key": SERP_API_KEY
         }
         
-        response = requests.get(url, params=params, timeout=10)
-        logger.info(f"SerpAPI response status: {response.status_code}")
-        response.raise_for_status()
+        # Retry logic: retry up to 3 times with exponential backoff (min 4s, max 10s)
+        @retry(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=4, max=10),
+            retry=retry_if_exception_type((requests.Timeout, requests.RequestException)),
+            before_sleep=lambda retry_state: logger.info(
+                f"Retrying SerpAPI request for '{query}' (attempt {retry_state.attempt_number}/3) after {retry_state.idle_for:.2f}s"
+            )
+        )
+        def make_request():
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            return response
+
+        response = make_request()
         data = response.json()
         jobs = data.get("jobs_results", [])
         logger.info(f"Fetched {len(jobs)} jobs for query: '{query}'")
         return jobs
-    except requests.Timeout:
-        logger.error(f"Timeout fetching SerpAPI for '{query}'")
+    except requests.Timeout as e:
+        logger.error(f"All retries failed due to timeout for SerpAPI request for '{query}': {e}")
         return []
     except requests.RequestException as e:
-        logger.error(f"SerpAPI request failed: {e}")
+        logger.error(f"All retries failed for SerpAPI request for '{query}': {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Unexpected error in SerpAPI request for '{query}': {e}")
         return []
 
 def extract_domain(url):
