@@ -7,7 +7,7 @@ on:
 jobs:
   run-script:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # Increased from 30 to 60 minutes
+    timeout-minutes: 120  # Increased from 30 to 60 minutes
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -77,7 +77,7 @@ jobs:
           GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
-        timeout-minutes: 55  # Increased from 25 to 55 minutes
+        timeout-minutes: 120  # Increased from 25 to 55 minutes
         run: |
           echo "🚀 Running app.py for all campaigns..."
           IFS=',' read -r -a campaigns <<< "${{ steps.get_campaigns.outputs.campaigns }}"
