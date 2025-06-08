@@ -288,6 +288,11 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         logger.info(f"Existing data: {len(df)} rows")
         
+        # Backup existing data
+        backup_data = worksheet.get_all_values()
+        logger.info(f"Backup created with {len(backup_data)} rows")
+
+        # Filter out rows for the current campaign and date
         if not df.empty:
             df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["date"] != today)]
             logger.info(f"Keeping {len(df_to_keep)} rows after filtering")
@@ -304,22 +309,39 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
                             float(avg_v), float(avg_h), campaign_name, country, single_link.get(domain, 0)])
         logger.info(f"New rows to add: {len(new_rows)}")
         
+        # Update data without clearing the entire sheet
         updated_data = df_to_keep.values.tolist() if not df_to_keep.empty else []
         updated_data.extend(new_rows)
         logger.info(f"Total rows to write: {len(updated_data)}")
         
         if updated_data:
             rate_limit()
-            worksheet.clear()
-            worksheet.append_row(["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
-            worksheet.append_rows(updated_data)
-            logger.info(f"Replaced {len(new_rows)} rows for '{campaign_name}' on {today}")
+            # Preserve header and update only the data range
+            header = ["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"]
+            if worksheet.row_count > 1:  # Check if there’s existing data
+                worksheet.update('A2', [header] + updated_data)  # Update from A2 to keep existing structure
+            else:
+                worksheet.append_row(header)
+                worksheet.append_rows(updated_data)
+            logger.info(f"Updated {len(new_rows)} rows for '{campaign_name}' on {today}")
         else:
             logger.warning(f"No data to write for '{campaign_name}' on {today}, sheet unchanged")
+
+        # Verify the update
+        updated_all_data = worksheet.get_all_records()
+        expected_rows = len(df_to_keep) + len(new_rows) + 1  # +1 for header
+        if len(updated_all_data) == expected_rows:
+            logger.info(f"✅ Check passed: Found {len(new_rows)} rows for campaign '{campaign_name}' on {today}")
+        else:
+            raise ValueError(f"Row count mismatch: expected {expected_rows}, got {len(updated_all_data)}")
+
     except Exception as e:
         logger.error(f"Error saving to Google Sheets for campaign '{campaign_name}': {e}")
+        # Restore backup data
+        if backup_data:
+            worksheet.update('A1', backup_data)
+            logger.info(f"Restored backup data with {len(backup_data)} rows")
         raise
-
 def get_historical_data(start_date, end_date, campaign_name):
     try:
         worksheet = worksheet_cache["share_of_voice"]
