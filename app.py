@@ -225,7 +225,7 @@ def compute_sov(campaign_name):
     domain_appearances = defaultdict(int)
     domain_v_rank = defaultdict(list)
     domain_h_rank = defaultdict(list)
-    domain_single_link = defaultdict(int)
+    domain_has_single_link = defaultdict(int)
     total_sov = 0
 
     jobs_data = load_jobs(campaign_name)
@@ -243,7 +243,7 @@ def compute_sov(campaign_name):
             V = 1 / job_rank
             if len(apply_options) == 1 and "link" in apply_options[0]:
                 domain = extract_domain(apply_options[0]["link"])
-                domain_single_link[domain] += 1
+                domain_has_single_link[domain] += 1
                 domain_sov[domain] += V
                 domain_appearances[domain] += 1
                 domain_v_rank[domain].append(job_rank)
@@ -270,8 +270,8 @@ def compute_sov(campaign_name):
     domain_avg_v_rank = {domain: round(sum(vr) / len(vr), 2) for domain, vr in domain_v_rank.items() if vr}
     domain_avg_h_rank = {domain: round(sum(hr) / len(hr), 2) for domain, hr in domain_h_rank.items() if hr}
     
-    logger.info(f"Computed SoV for '{campaign_name}': {len(domain_sov)} domains, {sum(domain_single_link.values())} single-link appearances")
-    return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank, domain_single_link, country
+    logger.info(f"Computed SoV for '{campaign_name}': {len(domain_sov)} domains, {sum(domain_has_single_link.values())} single-link appearances")
+    return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank, domain_has_single_link, country
 
 def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name, country):
     if not sov_data:
@@ -342,6 +342,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
             worksheet.update('A1', backup_data)
             logger.info(f"Restored backup data with {len(backup_data)} rows")
         raise
+
 def get_historical_data(start_date, end_date, campaign_name):
     try:
         worksheet = worksheet_cache["share_of_voice"]
@@ -372,10 +373,6 @@ def get_historical_data(start_date, end_date, campaign_name):
         df_metrics = df_metrics.swaplevel(axis=1).sort_index(axis=1)
         df_appearances = df_agg.pivot(index="domain", columns="date", values="appearances").fillna(0)
 
-        if not df_sov.empty:
-            most_recent_date = df_sov.columns[-1]
-            df_sov = df_sov.sort_values(by=most_recent_date, ascending=False)
-        
         return df_sov, df_metrics, df_appearances
     except Exception as e:
         logger.error(f"Error in get_historical_data for '{campaign_name}': {e}")
@@ -408,10 +405,6 @@ def get_total_historical_data(start_date, end_date, country):
         df_metrics = df_metrics.swaplevel(axis=1).sort_index(axis=1)
         df_appearances = df_agg.pivot(index="domain", columns="date", values="appearances").fillna(0)
 
-        if not df_sov.empty:
-            most_recent_date = df_sov.columns[-1]
-            df_sov = df_sov.sort_values(by=most_recent_date, ascending=False)
-        
         historical_data_cache[cache_key] = (df_sov, df_metrics, df_appearances)
         return df_sov, df_metrics, df_appearances
     except Exception as e:
@@ -669,11 +662,14 @@ def main():
         else:
             df_sov, df_metrics, df_appearances = get_historical_data(start_date, end_date, selected_campaign_name)
 
-        if not df_sov.empty:
-            top_domains = df_sov.iloc[:15]
+        if not df_sov.empty and not df_appearances.empty:
+            # Select top 15 domains for Visibility chart based on appearances on the most recent date
+            most_recent_date = df_appearances.columns[-1]
+            top_domains_by_appearances = df_appearances.sort_values(by=most_recent_date, ascending=False).iloc[:15]
+            top_domains_sov = df_sov.loc[top_domains_by_appearances.index]
 
             st.write("### Appearances Over Time")
-            top_domains_appearances = df_appearances.loc[top_domains.index]
+            top_domains_appearances = df_appearances.loc[top_domains_by_appearances.index]
             fig2 = go.Figure()
             for domain in top_domains_appearances.index:
                 fig2.add_trace(go.Scatter(x=top_domains_appearances.columns, y=top_domains_appearances.loc[domain], mode="markers+lines", name=domain))
@@ -690,8 +686,11 @@ def main():
 
             st.write("### Visibility Over Time")
             fig1 = go.Figure()
-            for domain in top_domains.index:
-                fig1.add_trace(go.Scatter(x=top_domains.columns, y=top_domains.loc[domain], mode="markers+lines", name=domain))
+            for domain in top_domains_by_appearances.index:
+                if domain in top_domains_sov.index and not top_domains_sov.loc[domain].isna().all():
+                    fig1.add_trace(go.Scatter(x=top_domains_sov.columns, y=top_domains_sov.loc[domain], mode="markers+lines", name=domain))
+                else:
+                    logger.warning(f"Skipping domain {domain} in Visibility chart: missing or invalid SoV data")
             fig1.update_layout(title=f"Domains Visibility Over Time for {selected_campaign_name}", xaxis_title="Date", yaxis_title="Share of Voice (%)")
             st.plotly_chart(fig1)
             st.write("#### Table of Visibility Score Data")
