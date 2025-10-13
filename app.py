@@ -680,7 +680,7 @@ def main():
             if not df_metrics.empty:
                 last_date = df_metrics.columns.get_level_values(0)[-1]
                 df_metrics_sorted = df_metrics.sort_values(by=(last_date, "appearances"), ascending=False)
-                st.dataframe(df_metrics_sorted.style.format("{:.2f}"))
+                st.dataframe(df_metrics_sorted.round(2))
             else:
                 st.write("No additional metrics data available.")
 
