@@ -38,7 +38,11 @@ To successfully take over this project, you must ensure you have access to the f
 ## 4. Environment Variables & Secrets
 The application relies heavily on environment variables to function securely. **Do not hardcode these in the source code.**
 
-You need to configure the following variables in your local `.env` file or your hosting provider's Secrets/Environment variables tab:
+Because this application acts as both a web dashboard and a background job runner, you will need to configure these secrets in **two different places**:
+1. **Streamlit Secrets** (or your hosting provider's environment variables): This is required for the web dashboard to function so users can view the data.
+2. **GitHub Repository Secrets**: This is required for the automated daily scraping jobs (GitHub Actions) to run successfully in the background.
+
+You need to configure the following variables in both locations (and your local `.env` file if developing locally):
 
 | Variable Name           | Description / Source                                                                                                                                           |
 | :---------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------- |
