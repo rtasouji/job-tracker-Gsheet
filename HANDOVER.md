@@ -31,7 +31,7 @@ To successfully take over this project, you must ensure you have access to the f
 1.  **GitHub Repository:** Ensure you have pull/push access to this repository.
 2.  **Google Sheet (Database):** You need `Editor` or `Owner` permissions on the master Google Sheet used by the application.
 3.  **Google Cloud Platform (GCP) Service Account:** You need access to the GCP project where the Google Sheets API is enabled. You will need to generate or access the JSON key for the Service Account that the app uses.
-4.  **SerpAPI Account:** You need the login details for the SerpAPI account to manage billing and access the API key used for scraping jobs.
+4.  **SerpAPI Account:** Simon has been given access to the SerpAPI dashboard where the API key exists. *Note: We are currently paying $75 per month for this service.*
 
 ---
 
