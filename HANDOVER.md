@@ -106,6 +106,8 @@ The easiest, fastest, and completely free way to make this dashboard live on the
 ---
 
 ## 7. Google Sheets Database Structure
+**Live Database URL:** [GfJ Tracker Database](https://docs.google.com/spreadsheets/d/1VplsnX77pdvPffT3CgtjHjwky_cC3w-8yZeaUt2-UC0/edit?gid=0#gid=0)
+
 The application automatically manages the Google Sheet, but it expects two specific worksheets (tabs) to exist. If they do not exist, the app will attempt to create them.
 
 1.  **`campaigns` tab:** Stores the configurations for what jobs to search. Columns include `campaign_name`, `job_titles` (JSON array), `locations` (JSON array), `country`, and `created_at`.
