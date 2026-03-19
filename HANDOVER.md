@@ -3,7 +3,7 @@
 ## 1. Overview
 This project is a Python-based web application built with **Streamlit** that tracks the "Share of Voice" (SoV) and visibility of various domains in Google Jobs search results. 
 
-Instead of a traditional database, the application utilizes **Google Sheets** to store historical data and campaign configurations. It uses **SerpAPI** to run Google Jobs searches and aggregate the results.
+Instead of a traditional database, the application utilises **Google Sheets** to store historical data and campaign configurations. It uses **SerpAPI** to run Google Jobs searches and aggregate the results.
 
 ### Tech Stack
 *   **Language:** Python 3.9+
@@ -11,17 +11,17 @@ Instead of a traditional database, the application utilizes **Google Sheets** to
 *   **Database:** Google Sheets (via `gspread` and `oauth2client`)
 *   **Data Scraper:** SerpAPI (`requests`, `tenacity`)
 *   **Data Processing:** Pandas
-*   **Data Visualization:** Plotly
+*   **Data Visualisation:** Plotly
 
 ---
 
 ## 2. Project Context & Future Roadmap
 This tool was built prior to the widespread availability of modern AI coding assistants (like Claude Code, Antigravity, etc.). As a result, the architecture relies on older paradigms. Specifically, **Google Sheets was chosen as the database simply because it was the only fully free and easy option available at the time**, not because it is the optimal technical choice for scale.
 
-**Action Required:** Now that powerful AI coding tools are available to the team, this project is uniquely positioned for a rapid, AI-assisted overhaul. It is highly recommended that the new owner uses these tools to prioritize the following:
+**Action Required:** Now that powerful AI coding tools are available to the team, this project is uniquely positioned for a rapid, AI-assisted overhaul. It is highly recommended that the new owner uses these tools to prioritise the following:
 1. **Database Migration:** Move away from Google Sheets to a robust database (e.g., SQLite, or a free cloud PostgreSQL like Supabase/Neon).
 2. **Codebase Refactor:** Split the monolithic `app.py` into modular components.
-3. **UI/UX Enhancements:** Improve the data visualization and dashboard design.
+3. **UI/UX Enhancements:** Improve the data visualisation and dashboard design.
 
 ---
 
