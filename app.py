@@ -297,6 +297,9 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         rate_limit()
         all_data = worksheet.get_all_records()
         df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
+        
+        # Clean up any literal header rows that accidentally got written as data
+        df = df[df["domain"] != "domain"]
         logger.info(f"Existing data: {len(df)} rows")
         
         # Backup existing data
@@ -329,8 +332,8 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
             rate_limit()
             # Preserve header and update only the data range
             header = ["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"]
-            if worksheet.row_count > 1:  # Check if there’s existing data
-                worksheet.update('A2', [header] + updated_data)  # Update from A2 to keep existing structure
+            if worksheet.row_count > 0:  # Check if there’s existing data
+                worksheet.update('A1', [header] + updated_data)  # Update from A1 to replace headers properly
             else:
                 worksheet.append_row(header)
                 worksheet.append_rows(updated_data)
