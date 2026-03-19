@@ -16,7 +16,7 @@ Instead of a complicated database, it just saves everything into a **Google Shee
 ---
 
 ## 2. Project Context & Future Plans
-I built this tool quite a while ago, before modern AI coding assistants were around. Because of that, and because we needed a free option at the time, I used Google Sheets to store all the data. 
+I built this tool quite a while ago, before modern AI coding assistants were around. If the setup feels a bit basic or not particularly advanced, that's why! Because we also needed a completely free option at the time, I simply used Google Sheets to store all the data.
 
 **Action Required:** Now that the team has access to powerful AI coding tools, it's a great time to give this project a proper update. I highly recommend the next person uses AI to help prioritise these upgrades:
 1. **Move to a real database:** It is time to swap out Google Sheets for a proper database like SQLite or a free cloud database (like Supabase or Neon). 
