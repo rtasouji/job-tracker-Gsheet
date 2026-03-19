@@ -1,99 +1,100 @@
 # Project Handover: Google for Jobs Visibility Tracker
 
 ## 1. Overview
-This project is a Python-based web application built with **Streamlit** that tracks the "Share of Voice" (SoV) and visibility of various domains in Google Jobs search results. 
+This tool is a simple web dashboard made with Python and **Streamlit**. It helps us see which company websites are showing up the most in Google Jobs search results (we measure this as "Share of Voice"). 
 
-Instead of a traditional database, the application utilises **Google Sheets** to store historical data and campaign configurations. It uses **SerpAPI** to run Google Jobs searches and aggregate the results.
+Instead of a complicated database, it just saves everything into a **Google Sheet**. Behind the scenes, it uses a service called **SerpAPI** to run the actual Google searches and collect all the job data.
 
-### Tech Stack
+### What it's built with:
 *   **Language:** Python 3.9+
-*   **Frontend/App Framework:** Streamlit
-*   **Database:** Google Sheets (via `gspread` and `oauth2client`)
-*   **Data Scraper:** SerpAPI (`requests`, `tenacity`)
-*   **Data Processing:** Pandas
-*   **Data Visualisation:** Plotly
+*   **Web Framework:** Streamlit
+*   **Database:** Google Sheets (using `gspread`)
+*   **Data Scraper:** SerpAPI
+*   **Data crunching:** Pandas
+*   **Charts & Visualisation:** Plotly
 
 ---
 
-## 2. Project Context & Future Roadmap
-This tool was built prior to the widespread availability of modern AI coding assistants (like Claude Code, Antigravity, etc.). As a result, the architecture relies on older paradigms. Specifically, **Google Sheets was chosen as the database simply because it was the only fully free and easy option available at the time**, not because it is the optimal technical choice for scale.
+## 2. Project Context & Future Plans
+I built this tool quite a while ago, before modern AI coding assistants were around. Because of that, and because we needed a free option at the time, I used Google Sheets to store all the data. 
 
-**Action Required:** Now that powerful AI coding tools are available to the team, this project is uniquely positioned for a rapid, AI-assisted overhaul. It is highly recommended that the new owner uses these tools to prioritise the following:
-1. **Database Migration:** Move away from Google Sheets to a robust database (e.g., SQLite, or a free cloud PostgreSQL like Supabase/Neon).
-2. **Codebase Refactor:** Split the monolithic `app.py` into modular components.
-3. **UI/UX Enhancements:** Improve the data visualisation and dashboard design.
+**Action Required:** Now that the team has access to powerful AI coding tools, it's a great time to give this project a proper update. I highly recommend the next person uses AI to help prioritise these upgrades:
+1. **Move to a real database:** It is time to swap out Google Sheets for a proper database like SQLite or a free cloud database (like Supabase or Neon). 
+2. **Tidy up the code:** The main `app.py` file is quite long and does everything at once. It should be split into smaller, neater files.
+3. **Make it look better:** Give the dashboard a bit of a facelift and improve the data visualisation.
 
 ---
 
 ## 3. Handover Checklist
-To successfully take over this project, you must ensure you have access to the following accounts and credentials:
+Before you can comfortably run or edit this tool, make sure you have access to a few key things:
 
-1.  **GitHub Repository:** Ensure you have pull/push access to this repository.
-2.  **Google Sheet (Database):** You need `Editor` or `Owner` permissions on the master Google Sheet used by the application.
-3.  **Google Cloud Platform (GCP) Service Account:** You need access to the GCP project where the Google Sheets API is enabled. You will need to generate or access the JSON key for the Service Account that the app uses.
-4.  **SerpAPI Account:** Simon has been given access to the SerpAPI dashboard where the API key exists. *Note: We are currently paying $75 per month for this service.*
-
----
-
-## 4. Environment Variables & Secrets
-The application relies heavily on environment variables to function securely. **Do not hardcode these in the source code.**
-
-Because this application acts as both a web dashboard and a background job runner, you will need to configure these secrets in **two different places**:
-1. **Streamlit Secrets** (or your hosting provider's environment variables): This is required for the web dashboard to function so users can view the data.
-2. **GitHub Repository Secrets**: This is required for the automated daily scraping jobs (GitHub Actions) to run successfully in the background.
-
-You need to configure the following variables in both locations (and your local `.env` file if developing locally):
-
-| Variable Name           | Description / Source                                                                                                                                           |
-| :---------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GOOGLE_SHEETS_CREDS`   | The raw JSON string of the Google Service Account credentials. *Note: Ensure this is formatted correctly as a single string if deployed.*                      |
-| `SPREADSHEET_ID`        | The ID of the Google Sheet (found in the URL between `/d/` and `/edit`).                                                                                       |
-| `SERP_API_KEY`          | Your secret API key from SerpAPI.com.                                                                                                                          |
-| `ADMIN_USERNAME`        | The username required to log into the "Campaign Management" panel in the UI. (Default in code if missing is "admin", but you should override this).            |
-| `ADMIN_PASSWORD`        | The password required to log into the "Campaign Management" panel.                                                                                             |
+1.  **GitHub:** Make sure you can pull and push code to this repository.
+2.  **Google Sheet:** You'll need 'Editor' rights to the main Google Sheet where our data lives.
+3.  **Google Cloud Account:** You need access to the Google Cloud project that connects our app to the Google Sheet (this is where you get the 'Service Account' key from).
+4.  **SerpAPI Account:** Simon has been given access to the SerpAPI dashboard where our API key lives. *Note: We are currently paying $75 per month for this service.*
 
 ---
 
-## 5. Local Development Setup
-Follow these steps to run the application on your local machine.
+## 4. Secret Keys & Passwords
+This app needs a few secret keys and passwords to work. **Never type these directly into the code!**
 
-### Step 1: Clone the repository
+Because this tool gives us a web dashboard *and* runs background tasks, you'll need to save these secrets in **two different places**:
+1. **Streamlit Secrets** (or your server settings): This lets the web dashboard securely load the data for people viewing the site.
+2. **GitHub Repository Secrets**: This lets the automated daily scraping jobs run successfully in the background on GitHub.
+
+Here are the variables you need to set up (also put these in a `.env` file if you are working on your own computer):
+
+| Name | What it is |
+| :--- | :--- |
+| `GOOGLE_SHEETS_CREDS` | The long JSON string from our Google Service Account. Make sure it stays formatted as one single line if you copy it into a server. |
+| `SPREADSHEET_ID` | The messy string of letters in the middle of our Google Sheets URL. |
+| `SERP_API_KEY` | Our secret API key from SerpAPI.com. |
+| `ADMIN_USERNAME` | The username you'll use to log into the "Campaign Management" panel on the dashboard. |
+| `ADMIN_PASSWORD` | The password you'll use for that same admin panel. |
+
+---
+
+## 5. Local Setup
+Want to run and test the code on your own computer? Just open your terminal and follow these steps:
+
+### Step 1: Download the code
 ```bash
 git clone https://github.com/rtasouji/job-tracker-Gsheet.git
 cd job-tracker-Gsheet
 ```
 
-### Step 2: Create a virtual environment and install dependencies
+### Step 2: Set up Python
 ```bash
 python -m venv venv
 
-# On Windows:
+# If you use Windows, run this:
 venv\Scripts\activate
-# On macOS/Linux:
+
+# If you use macOS or Linux, run this:
 source venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
-### Step 3: Set up environment variables
-Depending on your OS, export the variables listed in Section 4. Alternatively, you can run the app with variables inline (Linux/macOS) or use a `.env` file if you install `python-dotenv` (requires modifying `app.py` slightly).
+### Step 3: Add your secrets
+Set up your `.env` file with the secret keys from Section 4.
 
-### Step 4: Run the Streamlit application
+### Step 4: Run the app!
 ```bash
 streamlit run app.py
 ```
-The application should now be accessible at `http://localhost:8501`.
+A browser window should pop up automatically at `http://localhost:8501`.
 
 ---
 
-## 6. Production Deployment (Making it Live)
-The easiest, fastest, and completely free way to make this dashboard live on the internet is by using **Streamlit Community Cloud**.
+## 6. Making It Live (Deployment)
+The absolute easiest and completely free way to put this app on the internet is by using **Streamlit Community Cloud**.
 
-### Deployment Steps:
-1.  Go to [share.streamlit.io](https://share.streamlit.io/) and log in with your GitHub account.
+### How to get it online:
+1.  Go to [share.streamlit.io](https://share.streamlit.io/) and log in using your GitHub account.
 2.  Click **New App**.
-3.  Select this repository (`job-tracker-Gsheet`) and set the main file path to `app.py`.
-4.  Before clicking Deploy, click on **Advanced Settings** and paste all of the Environment Variables (from Section 4) into the **Secrets** text box using the TOML format. It should look like this:
+3.  Choose this repository (`job-tracker-Gsheet`) and make sure the main file path says `app.py`.
+4.  Before you click Deploy, click on **Advanced Settings** and paste all of your Secret Keys (from Section 4) into the text box using the TOML format. It should look like this:
     ```toml
     GOOGLE_SHEETS_CREDS = '{"type": "service_account", ...}'
     SPREADSHEET_ID = "your_sheet_id_here"
@@ -101,44 +102,41 @@ The easiest, fastest, and completely free way to make this dashboard live on the
     ADMIN_USERNAME = "admin"
     ADMIN_PASSWORD = "secure_password"
     ```
-5.  Click **Deploy**. Streamlit will install the requirements and launch your app. It will give you a public URL (e.g., `https://job-tracker-gsheet.streamlit.app`) that your team can use to view the dashboard.
+5.  Click **Deploy**. Streamlit will do the rest and give you a public URL (like `https://job-tracker-gsheet.streamlit.app`) that you can share with the team!
 
 ---
 
-## 7. Google Sheets Database Structure
-**Live Database URL:** [GfJ Tracker Database](https://docs.google.com/spreadsheets/d/1VplsnX77pdvPffT3CgtjHjwky_cC3w-8yZeaUt2-UC0/edit?gid=0#gid=0)
+## 7. Our Google Sheet Layout
+**Live Database Link:** [GfJ Tracker Database](https://docs.google.com/spreadsheets/d/1VplsnX77pdvPffT3CgtjHjwky_cC3w-8yZeaUt2-UC0/edit?gid=0#gid=0)
 
-The application automatically manages the Google Sheet, but it expects two specific worksheets (tabs) to exist. If they do not exist, the app will attempt to create them.
+The code actually manages the Google Sheet completely by itself. It looks for two specific tabs, and if they aren't there, it will try to create them:
 
-1.  **`campaigns` tab:** Stores the configurations for what jobs to search. Columns include `campaign_name`, `job_titles` (JSON array), `locations` (JSON array), `country`, and `created_at`.
-2.  **`share_of_voice` tab:** The historical database where the script writes daily metrics. Columns include `domain`, `date`, `sov`, `appearances`, `avg_v_rank`, `avg_h_rank`, `campaign_name`, `country`, and `single_link`.
+1.  **`campaigns` tab:** This is where it remembers what jobs we want to search for.
+2.  **`share_of_voice` tab:** This is the massive history book where it logs the daily visibility scores for every website it finds.
 
-> **⚠️ Important Warning regarding manual edits:** The app reads the whole sheet and appends rows based on index calculations. Manually deleting rows, sorting columns, or leaving blank spaces in the Google Sheet while the script is running might result in data corruption. 
+> **⚠️ A quick warning:** Please don't manually delete rows, sort the columns, or leave blank spaces anywhere in the data while the script is running, as it might confuse the code and break the layout!
 
 ---
 
-## 8. Automation & Background Jobs
-The system is designed to run automated daily fetches without loading the web UI. This is triggered via command-line arguments, which is ideal for **GitHub Actions** or **Cron Jobs**.
+## 8. Automated Daily Tracking
+This tool is clever enough to fetch fresh job data in the background every day without anyone opening the app. You can trigger it from the command line, which makes it perfect for **GitHub Actions** or scheduled tasks.
 
-*   **Fetch a specific campaign:** 
+*   **To get data for one specific campaign:**
     ```bash
     python app.py github <campaign_name>
     ```
-*   **Fetch all campaigns for a specific country:**
+*   **To get data for a whole country at once:**
     ```bash
     python app.py all_country <country_code>
     ```
 
-### Validation Script
-There is a utility script included called `check_db.py`. This script is meant to be run immediately after the automated data fetching job. It checks the Google Sheet to ensure that rows for *today's date* were successfully written. 
-```bash
-python check_db.py <campaign_name>
-```
-If data is missing, it logs a warning/error.
+**Checking it worked:**
+There is a tiny script called `check_db.py`. If you run it after a daily scrape, it simply logs into Google Sheets to double-check that today's data was actually saved properly.
 
 ---
 
-## 9. Known Architectural Limitations
-As the new owner, please be aware of the following technical debt:
-1. **Google Sheets Limits:** Fetching and writing thousands of rows daily to Google Sheets will eventually hit API payload limits and slow down the dashboard significantly. As mentioned in the Roadmap, migration to a real database (SQLite/PostgreSQL) is highly recommended.
-2. **SerpAPI Costs:** To speed up scraping, job queries are now processed concurrently using a `ThreadPoolExecutor` (max 10 workers). However, the app still does not cache raw SerpAPI responses locally. Running the same fetch script twice in one day will double your SerpAPI usage, so caution is advised when doing manual runs.
+## 9. Good Things to Know (Technical Debt)
+As you take over the project, there are two main technical quirks you should keep in mind:
+
+1. **Google Sheets gets slow:** Saving thousands of rows into a Google Sheet every single day will eventually slow down the dashboard and hit Google's connection limits. As we mentioned in the Future Plans section, moving to a real database is the best way to fix this permanently.
+2. **SerpAPI usage costs:** To make scraping faster, the app now checks up to 10 jobs at the exact same time. However, it doesn't remember old results. This means if you run the script twice in one day, it will essentially double our SerpAPI bill for that day, so please be careful with manual runs!
