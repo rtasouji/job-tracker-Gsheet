@@ -13,6 +13,7 @@ import logging
 import sys
 import time
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configure logging
 logging.basicConfig(
@@ -234,33 +235,43 @@ def compute_sov(campaign_name):
         return {}, {}, {}, {}, {}, "US"
 
     country = jobs_data[0]["country"] if jobs_data else "US"
-    for job_query in jobs_data:
-        job_title = job_query["job_title"]
-        location = job_query["location"]
-        jobs = get_google_jobs_results(job_title, location)
-        for job_rank, job in enumerate(jobs, start=1):
-            apply_options = job.get("apply_options", [])
-            V = 1 / job_rank
-            if len(apply_options) == 1 and "link" in apply_options[0]:
-                domain = extract_domain(apply_options[0]["link"])
-                domain_has_single_link[domain] += 1
-                domain_sov[domain] += V
-                domain_appearances[domain] += 1
-                domain_v_rank[domain].append(job_rank)
-                domain_h_rank[domain].append(1)
-                total_sov += V
-            else:
-                for link_order, option in enumerate(apply_options, start=1):
-                    if "link" in option:
-                        domain = extract_domain(option["link"])
-                        H = 1 / link_order
-                        weight = V * H
-                        domain_sov[domain] += weight
+
+    def fetch_jobs(job_query):
+        return get_google_jobs_results(job_query["job_title"], job_query["location"])
+
+    # Max concurrency of 10 to balance speed without hitting SerpAPI strict rate limits too hard
+    max_workers = min(10, len(jobs_data)) if jobs_data else 1
+    logger.info(f"Using ThreadPoolExecutor with {max_workers} workers for '{campaign_name}'")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_job = {executor.submit(fetch_jobs, job): job for job in jobs_data}
+        for future in as_completed(future_to_job):
+            try:
+                jobs = future.result()
+                for job_rank, job in enumerate(jobs, start=1):
+                    apply_options = job.get("apply_options", [])
+                    V = 1 / job_rank
+                    if len(apply_options) == 1 and "link" in apply_options[0]:
+                        domain = extract_domain(apply_options[0]["link"])
+                        domain_has_single_link[domain] += 1
+                        domain_sov[domain] += V
                         domain_appearances[domain] += 1
                         domain_v_rank[domain].append(job_rank)
-                        domain_h_rank[domain].append(link_order)
-                        total_sov += weight
-        time.sleep(1)
+                        domain_h_rank[domain].append(1)
+                        total_sov += V
+                    else:
+                        for link_order, option in enumerate(apply_options, start=1):
+                            if "link" in option:
+                                domain = extract_domain(option["link"])
+                                H = 1 / link_order
+                                weight = V * H
+                                domain_sov[domain] += weight
+                                domain_appearances[domain] += 1
+                                domain_v_rank[domain].append(job_rank)
+                                domain_h_rank[domain].append(link_order)
+                                total_sov += weight
+            except Exception as exc:
+                logger.error(f"Job fetch resulted in an exception: {exc}")
 
     if total_sov > 0:
         domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
