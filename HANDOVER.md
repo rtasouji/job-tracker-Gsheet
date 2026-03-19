@@ -3,6 +3,9 @@
 ## 1. Overview
 This tool is a simple web dashboard made with Python and **Streamlit**. It helps us see which company websites are showing up the most in Google Jobs search results (we measure this as "Share of Voice"). 
 
+### Why this tool is helpful:
+By tracking this data over time, we can clearly see the performance trends of our competitors on Google for Jobs (GfJ). If we spot sudden trend changes or spikes for specific websites, it gives us the perfect opportunity to investigate those competitors and analyse their sites to figure out if they are doing anything differently with their job postings.
+
 Instead of a complicated database, it just saves everything into a **Google Sheet**. Behind the scenes, it uses a service called **SerpAPI** to run the actual Google searches and collect all the job data.
 
 ### What it's built with:
