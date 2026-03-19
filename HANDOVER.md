@@ -86,7 +86,26 @@ The application should now be accessible at `http://localhost:8501`.
 
 ---
 
-## 6. Google Sheets Database Structure
+## 6. Production Deployment (Making it Live)
+The easiest, fastest, and completely free way to make this dashboard live on the internet is by using **Streamlit Community Cloud**.
+
+### Deployment Steps:
+1.  Go to [share.streamlit.io](https://share.streamlit.io/) and log in with your GitHub account.
+2.  Click **New App**.
+3.  Select this repository (`job-tracker-Gsheet`) and set the main file path to `app.py`.
+4.  Before clicking Deploy, click on **Advanced Settings** and paste all of the Environment Variables (from Section 4) into the **Secrets** text box using the TOML format. It should look like this:
+    ```toml
+    GOOGLE_SHEETS_CREDS = '{"type": "service_account", ...}'
+    SPREADSHEET_ID = "your_sheet_id_here"
+    SERP_API_KEY = "your_serp_api_key"
+    ADMIN_USERNAME = "admin"
+    ADMIN_PASSWORD = "secure_password"
+    ```
+5.  Click **Deploy**. Streamlit will install the requirements and launch your app. It will give you a public URL (e.g., `https://job-tracker-gsheet.streamlit.app`) that your team can use to view the dashboard.
+
+---
+
+## 7. Google Sheets Database Structure
 The application automatically manages the Google Sheet, but it expects two specific worksheets (tabs) to exist. If they do not exist, the app will attempt to create them.
 
 1.  **`campaigns` tab:** Stores the configurations for what jobs to search. Columns include `campaign_name`, `job_titles` (JSON array), `locations` (JSON array), `country`, and `created_at`.
@@ -96,7 +115,7 @@ The application automatically manages the Google Sheet, but it expects two speci
 
 ---
 
-## 7. Automation & Background Jobs
+## 8. Automation & Background Jobs
 The system is designed to run automated daily fetches without loading the web UI. This is triggered via command-line arguments, which is ideal for **GitHub Actions** or **Cron Jobs**.
 
 *   **Fetch a specific campaign:** 
@@ -117,7 +136,7 @@ If data is missing, it logs a warning/error.
 
 ---
 
-## 8. Known Architectural Limitations
+## 9. Known Architectural Limitations
 As the new owner, please be aware of the following technical debt:
 1. **Google Sheets Limits:** Fetching and writing thousands of rows daily to Google Sheets will eventually hit API payload limits and slow down the dashboard significantly. As mentioned in the Roadmap, migration to a real database (SQLite/PostgreSQL) is highly recommended.
 2. **SerpAPI Costs:** To speed up scraping, job queries are now processed concurrently using a `ThreadPoolExecutor` (max 10 workers). However, the app still does not cache raw SerpAPI responses locally. Running the same fetch script twice in one day will double your SerpAPI usage, so caution is advised when doing manual runs.
