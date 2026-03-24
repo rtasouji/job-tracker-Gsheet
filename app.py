@@ -412,8 +412,13 @@ def get_total_historical_data(start_date, end_date, country):
             logger.info(f"No 'Total - {country}' historical data in range {start_date} to {end_date}")
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-        df_agg = df[["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "single_link"]]
-        
+        df_agg = df.groupby(["domain", "date"], as_index=False).agg({
+            "sov": "mean",
+            "appearances": "sum",
+            "avg_v_rank": "mean",
+            "avg_h_rank": "mean",
+            "single_link": "sum"
+        })
         df_sov = df_agg.pivot(index="domain", columns="date", values="sov").fillna(0)
         df_metrics = df_agg.pivot(index="domain", columns="date", values=["appearances", "avg_v_rank", "avg_h_rank", "single_link"]).fillna(0)
         df_metrics = df_metrics.swaplevel(axis=1).sort_index(axis=1)
