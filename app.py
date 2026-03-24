@@ -452,7 +452,12 @@ def compute_and_store_total_data():
         
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         today = datetime.date.today().isoformat()
-        df = df[(df["date"] == today) & (~df["campaign_name"].str.startswith("Total - "))]
+        try:
+            df["parsed_date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
+        except Exception:
+            df["parsed_date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
+        today_date = datetime.date.fromisoformat(today)
+        df = df[(df["parsed_date"] == today_date) & (~df["campaign_name"].str.startswith("Total - "))]
         if df.empty:
             logger.warning(f"No non-Total data to aggregate for {today}")
             return
