@@ -308,7 +308,12 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
 
         # Filter out rows for the current campaign and date
         if not df.empty:
-            df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["date"] != today)]
+            try:
+                df["parsed_date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
+            except Exception:
+                df["parsed_date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
+            today_date = datetime.date.fromisoformat(today)
+            df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["parsed_date"] != today_date)].drop(columns=["parsed_date"])
             logger.info(f"Keeping {len(df_to_keep)} rows after filtering")
         else:
             df_to_keep = pd.DataFrame(columns=df.columns)
@@ -367,7 +372,10 @@ def get_historical_data(start_date, end_date, campaign_name):
             df["single_link"] = 0
         
         df = df[df["campaign_name"] == campaign_name]
-        df["date"] = pd.to_datetime(df["date"]).dt.date
+        try:
+            df["date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
+        except Exception:
+            df["date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
         df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
         
         if df.empty:
@@ -376,10 +384,10 @@ def get_historical_data(start_date, end_date, campaign_name):
 
         df_agg = df.groupby(["domain", "date"], as_index=False).agg({
             "sov": "mean",
-            "appearances": "sum",
+            "appearances": "max",
             "avg_v_rank": "mean",
             "avg_h_rank": "mean",
-            "single_link": "sum"
+            "single_link": "max"
         })
         
         df_sov = df_agg.pivot(index="domain", columns="date", values="sov").fillna(0)
@@ -405,7 +413,10 @@ def get_total_historical_data(start_date, end_date, country):
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         
         df = df[(df["campaign_name"] == f"Total - {country}") & (df["country"] == country)]
-        df["date"] = pd.to_datetime(df["date"]).dt.date
+        try:
+            df["date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
+        except Exception:
+            df["date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
         df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
         
         if df.empty:
@@ -414,10 +425,10 @@ def get_total_historical_data(start_date, end_date, country):
 
         df_agg = df.groupby(["domain", "date"], as_index=False).agg({
             "sov": "mean",
-            "appearances": "sum",
+            "appearances": "max",
             "avg_v_rank": "mean",
             "avg_h_rank": "mean",
-            "single_link": "sum"
+            "single_link": "max"
         })
         df_sov = df_agg.pivot(index="domain", columns="date", values="sov").fillna(0)
         df_metrics = df_agg.pivot(index="domain", columns="date", values=["appearances", "avg_v_rank", "avg_h_rank", "single_link"]).fillna(0)
