@@ -284,39 +284,45 @@ def compute_sov(campaign_name):
     logger.info(f"Computed SoV for '{campaign_name}': {len(domain_sov)} domains, {sum(domain_has_single_link.values())} single-link appearances")
     return domain_sov, domain_appearances, domain_avg_v_rank, domain_avg_h_rank, domain_has_single_link, country
 
-def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name, country):
+def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campaign_name, country, date_to_save=None):
     if not sov_data:
         logger.warning(f"No SoV data to save for campaign '{campaign_name}'")
         return
     
     try:
         worksheet = worksheet_cache["share_of_voice"]
-        today = datetime.date.today().isoformat()
-        logger.info(f"Saving data for campaign '{campaign_name}' on {today}")
+        # Use provided date if available, else use today
+        if date_to_save:
+             if isinstance(date_to_save, (datetime.date, datetime.datetime)):
+                 save_date = date_to_save.strftime("%Y-%m-%d")
+             else:
+                 save_date = str(date_to_save)
+        else:
+             save_date = datetime.date.today().isoformat()
+             
+        logger.info(f"Saving data for campaign '{campaign_name}' on {save_date}")
         
         rate_limit()
         all_data = worksheet.get_all_records()
         df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         
-        # Clean up any literal header rows that accidentally got written as data
-        df = df[df["domain"] != "domain"]
-        logger.info(f"Existing data: {len(df)} rows")
+        # Consistent date parsing for filtering
+        try:
+            df["parsed_date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
+        except Exception:
+            df["parsed_date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
+            
+        target_date_obj = pd.to_datetime(save_date).date()
         
         # Backup existing data
         backup_data = worksheet.get_all_values()
-        logger.info(f"Backup created with {len(backup_data)} rows")
 
         # Filter out rows for the current campaign and date
         if not df.empty:
-            try:
-                df["parsed_date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
-            except Exception:
-                df["parsed_date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
-            today_date = datetime.date.fromisoformat(today)
-            df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["parsed_date"] != today_date)].drop(columns=["parsed_date"])
+            df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["parsed_date"] != target_date_obj)].drop(columns=["parsed_date"])
             logger.info(f"Keeping {len(df_to_keep)} rows after filtering")
         else:
-            df_to_keep = pd.DataFrame(columns=df.columns)
+            df_to_keep = pd.DataFrame(columns=[c for c in df.columns if c != "parsed_date"])
             logger.info("No existing data to keep")
         
         new_rows = []
@@ -324,7 +330,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
             sov = sov_data[domain] if pd.notna(sov_data[domain]) else 0
             avg_v = avg_v_rank.get(domain, 0) if pd.notna(avg_v_rank.get(domain, 0)) else 0
             avg_h = avg_h_rank.get(domain, 0) if pd.notna(avg_h_rank.get(domain, 0)) else 0
-            new_rows.append([domain, today, round(float(sov), 2), appearances[domain], 
+            new_rows.append([domain, save_date, round(float(sov), 2), appearances[domain], 
                             float(avg_v), float(avg_h), campaign_name, country, single_link.get(domain, 0)])
         logger.info(f"New rows to add: {len(new_rows)}")
         
@@ -441,7 +447,7 @@ def get_total_historical_data(start_date, end_date, country):
         logger.error(f"Error in get_total_historical_data for country '{country}': {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-def compute_and_store_total_data():
+def compute_and_store_total_data(target_date=None):
     try:
         worksheet = worksheet_cache["share_of_voice"]
         rate_limit()
@@ -451,18 +457,28 @@ def compute_and_store_total_data():
             return
         
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
-        today = datetime.date.today().isoformat()
+        
+        # Robust date parsing
         try:
             df["parsed_date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
         except Exception:
             df["parsed_date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
-        today_date = datetime.date.fromisoformat(today)
-        df = df[(df["parsed_date"] == today_date) & (~df["campaign_name"].str.startswith("Total - "))]
-        if df.empty:
-            logger.warning(f"No non-Total data to aggregate for {today}")
+            
+        if target_date is None:
+            target_date = datetime.date.today()
+        elif isinstance(target_date, str):
+            target_date = pd.to_datetime(target_date).date()
+            
+        logger.info(f"Computing Totals for date: {target_date}")
+        
+        # Filter for the target date and exclude existing "Total" rows
+        df_target = df[(df["parsed_date"] == target_date) & (~df["campaign_name"].str.startswith("Total - "))]
+        
+        if df_target.empty:
+            logger.warning(f"No non-Total data found for {target_date} to aggregate")
             return
         
-        grouped = df.groupby("country")
+        grouped = df_target.groupby("country")
         for country, country_df in grouped:
             domain_sov = defaultdict(float)
             domain_appearances = defaultdict(int)
@@ -488,8 +504,8 @@ def compute_and_store_total_data():
                 domain_sov = {domain: round((sov / total_sov) * 100, 4) for domain, sov in domain_sov.items()}
 
             total_campaign_name = f"Total - {country}"
-            save_to_db(domain_sov, domain_appearances, total_avg_v_rank, total_avg_h_rank, domain_single_link, total_campaign_name, country)
-            logger.info(f"Total data computed and stored for {total_campaign_name} on {today} based on {len(country_df['campaign_name'].unique())} campaign(s)")
+            save_to_db(domain_sov, domain_appearances, total_avg_v_rank, total_avg_h_rank, domain_single_link, total_campaign_name, country, date_to_save=target_date)
+            logger.info(f"Total data computed and stored for {total_campaign_name} on {target_date} based on {len(country_df['campaign_name'].unique())} campaign(s)")
     except Exception as e:
         logger.error(f"Error in compute_and_store_total_data: {e}")
 
@@ -682,14 +698,25 @@ def main():
 
             if st.button("Fetch & Store Data", key="fetch_store_button"):
                 if selected_campaign_name.startswith("Total - "):
+                    st.info("Recalculating Totals for today...")
                     compute_and_store_total_data()
-                    st.success("Total data across all campaigns stored successfully!")
+                    st.success("Total data across all campaigns updated successfully!")
                 else:
                     sov_data, appearances, avg_v_rank, avg_h_rank, single_link, country = compute_sov(selected_campaign_name)
                     save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, selected_campaign_name, country)
                     compute_and_store_total_data()
                     st.success(f"Data stored successfully for campaign '{selected_campaign_name}' and Totals updated!")
                 historical_data_cache.clear()
+
+            st.sidebar.divider()
+            st.sidebar.header("Advanced Actions")
+            total_date_fix = st.sidebar.date_input("Recalculate Total for specific date", value=datetime.date.today(), key="total_date_fix_input")
+            if st.sidebar.button("Run Total Recalculation", key="run_total_fix_button"):
+                 with st.spinner(f"Recalculating all Totals for {total_date_fix}..."):
+                      compute_and_store_total_data(target_date=total_date_fix)
+                 st.sidebar.success(f"Successfully recalculated all Totals for {total_date_fix}!")
+                 historical_data_cache.clear()
+                 st.rerun()
 
         if selected_campaign_name.startswith("Total - "):
             country = selected_campaign_name.replace("Total - ", "")
