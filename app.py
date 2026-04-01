@@ -301,6 +301,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
              save_date = datetime.date.today().isoformat()
              
         logger.info(f"Saving data for campaign '{campaign_name}' on {save_date}")
+        today = save_date
         
         rate_limit()
         all_data = worksheet.get_all_records()
@@ -334,27 +335,28 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
                             float(avg_v), float(avg_h), campaign_name, country, single_link.get(domain, 0)])
         logger.info(f"New rows to add: {len(new_rows)}")
         
-        # Update data without clearing the entire sheet
+        # Build the replacement dataset for the sheet.
         updated_data = df_to_keep.values.tolist() if not df_to_keep.empty else []
         updated_data.extend(new_rows)
         logger.info(f"Total rows to write: {len(updated_data)}")
         
+        header = ["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"]
         if updated_data:
             rate_limit()
-            # Preserve header and update only the data range
-            header = ["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"]
+            # Rewrite the sheet so rows removed by filtering do not linger below the new range.
             if worksheet.row_count > 0:  # Check if there’s existing data
                 worksheet.update('A1', [header] + updated_data)  # Update from A1 to replace headers properly
             else:
                 worksheet.append_row(header)
                 worksheet.append_rows(updated_data)
-            logger.info(f"Updated {len(new_rows)} rows for '{campaign_name}' on {today}")
+            worksheet.resize(rows=max(len(updated_data) + 1, 1))
+            logger.info(f"Updated {len(new_rows)} rows for '{campaign_name}' on {save_date}")
         else:
-            logger.warning(f"No data to write for '{campaign_name}' on {today}, sheet unchanged")
+            logger.warning(f"No data to write for '{campaign_name}' on {save_date}, sheet unchanged")
 
         # Verify the update
         updated_all_data = worksheet.get_all_records()
-        expected_rows = len(df_to_keep) + len(new_rows) + 1  # +1 for header
+        expected_rows = len(df_to_keep) + len(new_rows)
         if len(updated_all_data) == expected_rows:
             logger.info(f"✅ Check passed: Found {len(new_rows)} rows for campaign '{campaign_name}' on {today}")
         else:
