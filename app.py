@@ -303,10 +303,8 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         logger.info(f"Saving data for campaign '{campaign_name}' on {save_date}")
         today = save_date
         
-        logger.info(f"[Sheets] About to read existing share_of_voice rows for '{campaign_name}'")
         rate_limit()
         all_data = worksheet.get_all_records()
-        logger.info(f"[Sheets] Read {len(all_data)} existing share_of_voice rows for '{campaign_name}'")
         df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         
         # Consistent date parsing for filtering
@@ -318,9 +316,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         target_date_obj = pd.to_datetime(save_date).date()
         
         # Backup existing data
-        logger.info(f"[Sheets] About to back up current worksheet values for '{campaign_name}'")
         backup_data = worksheet.get_all_values()
-        logger.info(f"[Sheets] Backed up {len(backup_data)} worksheet rows for '{campaign_name}'")
 
         # Filter out rows for the current campaign and date
         if not df.empty:
@@ -349,27 +345,17 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
             rate_limit()
             # Rewrite the sheet so rows removed by filtering do not linger below the new range.
             if worksheet.row_count > 0:  # Check if there’s existing data
-                logger.info(f"[Sheets] About to update worksheet from A1 with {len(updated_data)} data rows for '{campaign_name}'")
                 worksheet.update('A1', [header] + updated_data)  # Update from A1 to replace headers properly
-                logger.info(f"[Sheets] Worksheet update completed for '{campaign_name}'")
             else:
-                logger.info(f"[Sheets] Worksheet has no rows, appending header for '{campaign_name}'")
                 worksheet.append_row(header)
-                logger.info(f"[Sheets] Header append completed for '{campaign_name}'")
-                logger.info(f"[Sheets] Appending {len(updated_data)} data rows for '{campaign_name}'")
                 worksheet.append_rows(updated_data)
-                logger.info(f"[Sheets] Data rows append completed for '{campaign_name}'")
-            logger.info(f"[Sheets] About to resize worksheet to {max(len(updated_data) + 1, 1)} rows for '{campaign_name}'")
             worksheet.resize(rows=max(len(updated_data) + 1, 1))
-            logger.info(f"[Sheets] Worksheet resize completed for '{campaign_name}'")
             logger.info(f"Updated {len(new_rows)} rows for '{campaign_name}' on {save_date}")
         else:
             logger.warning(f"No data to write for '{campaign_name}' on {save_date}, sheet unchanged")
 
         # Verify the update
-        logger.info(f"[Sheets] About to verify saved rows for '{campaign_name}'")
         updated_all_data = worksheet.get_all_records()
-        logger.info(f"[Sheets] Verification read returned {len(updated_all_data)} rows for '{campaign_name}'")
         expected_rows = len(df_to_keep) + len(new_rows)
         if len(updated_all_data) == expected_rows:
             logger.info(f"✅ Check passed: Found {len(new_rows)} rows for campaign '{campaign_name}' on {today}")
@@ -380,7 +366,6 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         logger.error(f"Error saving to Google Sheets for campaign '{campaign_name}': {e}")
         # Restore backup data
         if backup_data:
-            logger.info(f"[Sheets] Attempting to restore backup with {len(backup_data)} rows for '{campaign_name}'")
             worksheet.update('A1', backup_data)
             logger.info(f"Restored backup data with {len(backup_data)} rows")
         raise
