@@ -288,98 +288,101 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
     if not sov_data:
         logger.warning(f"No SoV data to save for campaign '{campaign_name}'")
         return
-
+    
     try:
         worksheet = worksheet_cache["share_of_voice"]
+        # Use provided date if available, else use today
         if date_to_save:
-            if isinstance(date_to_save, (datetime.date, datetime.datetime)):
-                save_date = date_to_save.strftime("%Y-%m-%d")
-            else:
-                save_date = str(date_to_save)
+             if isinstance(date_to_save, (datetime.date, datetime.datetime)):
+                 save_date = date_to_save.strftime("%Y-%m-%d")
+             else:
+                 save_date = str(date_to_save)
         else:
-            save_date = datetime.date.today().isoformat()
-
+             save_date = datetime.date.today().isoformat()
+             
         logger.info(f"Saving data for campaign '{campaign_name}' on {save_date}")
+        today = save_date
+        
+        logger.info(f"[Sheets] About to read existing share_of_voice rows for '{campaign_name}'")
+        rate_limit()
+        all_data = worksheet.get_all_records()
+        logger.info(f"[Sheets] Read {len(all_data)} existing share_of_voice rows for '{campaign_name}'")
+        df = pd.DataFrame(all_data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
+        
+        # Consistent date parsing for filtering
+        try:
+            df["parsed_date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
+        except Exception:
+            df["parsed_date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
+            
+        target_date_obj = pd.to_datetime(save_date).date()
+        
+        # Backup existing data
+        logger.info(f"[Sheets] About to back up current worksheet values for '{campaign_name}'")
+        backup_data = worksheet.get_all_values()
+        logger.info(f"[Sheets] Backed up {len(backup_data)} worksheet rows for '{campaign_name}'")
 
+        # Filter out rows for the current campaign and date
+        if not df.empty:
+            df_to_keep = df[(df["campaign_name"] != campaign_name) | (df["parsed_date"] != target_date_obj)].drop(columns=["parsed_date"])
+            logger.info(f"Keeping {len(df_to_keep)} rows after filtering")
+        else:
+            df_to_keep = pd.DataFrame(columns=[c for c in df.columns if c != "parsed_date"])
+            logger.info("No existing data to keep")
+        
         new_rows = []
         for domain in sov_data:
             sov = sov_data[domain] if pd.notna(sov_data[domain]) else 0
             avg_v = avg_v_rank.get(domain, 0) if pd.notna(avg_v_rank.get(domain, 0)) else 0
             avg_h = avg_h_rank.get(domain, 0) if pd.notna(avg_h_rank.get(domain, 0)) else 0
-            new_rows.append([
-                domain,
-                save_date,
-                round(float(sov), 2),
-                appearances[domain],
-                float(avg_v),
-                float(avg_h),
-                campaign_name,
-                country,
-                single_link.get(domain, 0),
-            ])
+            new_rows.append([domain, save_date, round(float(sov), 2), appearances[domain], 
+                            float(avg_v), float(avg_h), campaign_name, country, single_link.get(domain, 0)])
         logger.info(f"New rows to add: {len(new_rows)}")
-
-        logger.info(f"[Sheets] About to read date and campaign columns for '{campaign_name}'")
-        rate_limit()
-        date_column = worksheet.get("B2:B")
-        campaign_column = worksheet.get("G2:G")
-        max_len = max(len(date_column), len(campaign_column))
-        matching_rows = []
-        for index in range(max_len):
-            date_value = date_column[index][0] if index < len(date_column) and date_column[index] else ""
-            campaign_value = campaign_column[index][0] if index < len(campaign_column) and campaign_column[index] else ""
-            if date_value == save_date and campaign_value == campaign_name:
-                matching_rows.append(index + 2)
-        logger.info(f"[Sheets] Found {len(matching_rows)} existing rows for '{campaign_name}' on {save_date}")
-
-        if matching_rows:
-            grouped_rows = []
-            start_row = matching_rows[0]
-            end_row = matching_rows[0]
-            for row_number in matching_rows[1:]:
-                if row_number == end_row + 1:
-                    end_row = row_number
-                else:
-                    grouped_rows.append((start_row, end_row))
-                    start_row = row_number
-                    end_row = row_number
-            grouped_rows.append((start_row, end_row))
-
-            for start_row, end_row in reversed(grouped_rows):
-                logger.info(f"[Sheets] Deleting existing rows {start_row}-{end_row} for '{campaign_name}'")
-                rate_limit()
-                worksheet.delete_rows(start_row, end_row)
-                logger.info(f"[Sheets] Deleted rows {start_row}-{end_row} for '{campaign_name}'")
-
-        if new_rows:
-            logger.info(f"[Sheets] Appending {len(new_rows)} fresh rows for '{campaign_name}'")
+        
+        # Build the replacement dataset for the sheet.
+        updated_data = df_to_keep.values.tolist() if not df_to_keep.empty else []
+        updated_data.extend(new_rows)
+        logger.info(f"Total rows to write: {len(updated_data)}")
+        
+        header = ["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"]
+        if updated_data:
             rate_limit()
-            worksheet.append_rows(new_rows)
-            logger.info(f"[Sheets] Append completed for '{campaign_name}'")
+            # Rewrite the sheet so rows removed by filtering do not linger below the new range.
+            if worksheet.row_count > 0:  # Check if there’s existing data
+                logger.info(f"[Sheets] About to update worksheet from A1 with {len(updated_data)} data rows for '{campaign_name}'")
+                worksheet.update('A1', [header] + updated_data)  # Update from A1 to replace headers properly
+                logger.info(f"[Sheets] Worksheet update completed for '{campaign_name}'")
+            else:
+                logger.info(f"[Sheets] Worksheet has no rows, appending header for '{campaign_name}'")
+                worksheet.append_row(header)
+                logger.info(f"[Sheets] Header append completed for '{campaign_name}'")
+                logger.info(f"[Sheets] Appending {len(updated_data)} data rows for '{campaign_name}'")
+                worksheet.append_rows(updated_data)
+                logger.info(f"[Sheets] Data rows append completed for '{campaign_name}'")
+            logger.info(f"[Sheets] About to resize worksheet to {max(len(updated_data) + 1, 1)} rows for '{campaign_name}'")
+            worksheet.resize(rows=max(len(updated_data) + 1, 1))
+            logger.info(f"[Sheets] Worksheet resize completed for '{campaign_name}'")
+            logger.info(f"Updated {len(new_rows)} rows for '{campaign_name}' on {save_date}")
         else:
             logger.warning(f"No data to write for '{campaign_name}' on {save_date}, sheet unchanged")
 
-        logger.info(f"[Sheets] Verifying rows for '{campaign_name}' on {save_date}")
-        rate_limit()
-        updated_date_column = worksheet.get("B2:B")
-        updated_campaign_column = worksheet.get("G2:G")
-        verified_count = 0
-        max_updated_len = max(len(updated_date_column), len(updated_campaign_column))
-        for index in range(max_updated_len):
-            date_value = updated_date_column[index][0] if index < len(updated_date_column) and updated_date_column[index] else ""
-            campaign_value = updated_campaign_column[index][0] if index < len(updated_campaign_column) and updated_campaign_column[index] else ""
-            if date_value == save_date and campaign_value == campaign_name:
-                verified_count += 1
-
-        if verified_count == len(new_rows):
-            logger.info(f"Check passed: Found {verified_count} rows for campaign '{campaign_name}' on {save_date}")
+        # Verify the update
+        logger.info(f"[Sheets] About to verify saved rows for '{campaign_name}'")
+        updated_all_data = worksheet.get_all_records()
+        logger.info(f"[Sheets] Verification read returned {len(updated_all_data)} rows for '{campaign_name}'")
+        expected_rows = len(df_to_keep) + len(new_rows)
+        if len(updated_all_data) == expected_rows:
+            logger.info(f"✅ Check passed: Found {len(new_rows)} rows for campaign '{campaign_name}' on {today}")
         else:
-            raise ValueError(
-                f"Row count mismatch for '{campaign_name}' on {save_date}: expected {len(new_rows)}, got {verified_count}"
-            )
+            raise ValueError(f"Row count mismatch: expected {expected_rows}, got {len(updated_all_data)}")
 
     except Exception as e:
         logger.error(f"Error saving to Google Sheets for campaign '{campaign_name}': {e}")
+        # Restore backup data
+        if backup_data:
+            logger.info(f"[Sheets] Attempting to restore backup with {len(backup_data)} rows for '{campaign_name}'")
+            worksheet.update('A1', backup_data)
+            logger.info(f"Restored backup data with {len(backup_data)} rows")
         raise
 
 def get_historical_data(start_date, end_date, campaign_name):
