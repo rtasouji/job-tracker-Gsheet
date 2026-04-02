@@ -22,13 +22,13 @@ jobs:
       - name: Install dependencies
         timeout-minutes: 5  # Fails if install takes >5 minutes
         run: |
-          echo "📦 Installing dependencies..."
+          echo "Installing dependencies..."
           pip install -r requirements.txt
           pip install gspread oauth2client pandas  # Ensure pandas is installed
 
       - name: Debug Environment Variables
         run: |
-          echo "🔍 Debugging Environment Variables..."
+          echo "Debugging Environment Variables..."
           echo "GOOGLE_SHEETS_CREDS length: $(echo -n '${{ secrets.GOOGLE_SHEETS_CREDS }}' | wc -c)"
           echo "SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}"
           echo "SERP_API_KEY length: $(echo -n '${{ secrets.SERP_API_KEY }}' | wc -c)"
@@ -39,7 +39,7 @@ jobs:
           GOOGLE_SHEETS_CREDS: ${{ secrets.GOOGLE_SHEETS_CREDS }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
         run: |
-          echo "🔍 Fetching campaign names from Google Sheets..."
+          echo "Fetching campaign names from Google Sheets..."
           python -c "
           import gspread
           from oauth2client.service_account import ServiceAccountCredentials
@@ -79,24 +79,32 @@ jobs:
           SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
         timeout-minutes: 300  # Increased from 25 to 55 minutes
         run: |
-          echo "🚀 Running app.py for all campaigns..."
+          echo "Running app.py for all campaigns..."
           IFS=',' read -r -a campaigns <<< "${{ steps.get_campaigns.outputs.campaigns }}"
+          failed_campaigns=()
           for campaign in "${campaigns[@]}"; do
             if [ -n "$campaign" ] && [ "$campaign" != "Total" ]; then  # Skip "Total" as it's not a real campaign
               echo "Processing campaign: $campaign"
-              python app.py github "$campaign" || echo "⚠️ Failed to process $campaign"
+              if ! python app.py github "$campaign"; then
+                echo "Failed to process $campaign"
+                failed_campaigns+=("$campaign")
+              fi
               sleep 5  # Small delay to avoid overwhelming APIs
-              echo "✅ Script execution completed for campaign $campaign"
+              echo "Script execution completed for campaign $campaign"
             fi
           done
           echo "Computing Total data..."
-          python -c "from app import compute_and_store_total_data; compute_and_store_total_data()"
+          python -c "from app import initialize_sheets, compute_and_store_total_data; initialize_sheets(); compute_and_store_total_data()"
+          if [ ${#failed_campaigns[@]} -gt 0 ]; then
+            echo "The following campaigns failed: ${failed_campaigns[*]}"
+            exit 1
+          fi
 
       - name: Capture Logs
         if: always()  # Runs even if previous steps fail
         run: |
-          echo "📜 Capturing logs..."
-          cat logs.txt || echo "⚠️ No logs.txt found."
+          echo "Capturing logs..."
+          cat logs.txt || echo "No logs.txt found."
 
       - name: Upload logs as artifact
         if: always()  # Uploads logs even on failure

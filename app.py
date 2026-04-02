@@ -301,6 +301,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
              save_date = datetime.date.today().isoformat()
              
         logger.info(f"Saving data for campaign '{campaign_name}' on {save_date}")
+        today = save_date
         
         rate_limit()
         all_data = worksheet.get_all_records()
@@ -354,7 +355,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
 
         # Verify the update
         updated_all_data = worksheet.get_all_records()
-        expected_rows = len(df_to_keep) + len(new_rows) + 1  # +1 for header
+        expected_rows = len(df_to_keep) + len(new_rows)
         if len(updated_all_data) == expected_rows:
             logger.info(f"✅ Check passed: Found {len(new_rows)} rows for campaign '{campaign_name}' on {today}")
         else:
