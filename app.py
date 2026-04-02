@@ -323,12 +323,14 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         rate_limit()
         date_column = worksheet.get("B2:B")
         campaign_column = worksheet.get("G2:G")
+        target_date_obj = pd.to_datetime(save_date, dayfirst=True).date()
         max_len = max(len(date_column), len(campaign_column))
         matching_rows = []
         for index in range(max_len):
             date_value = date_column[index][0] if index < len(date_column) and date_column[index] else ""
             campaign_value = campaign_column[index][0] if index < len(campaign_column) and campaign_column[index] else ""
-            if date_value == save_date and campaign_value == campaign_name:
+            parsed_date = pd.to_datetime(date_value, dayfirst=True, errors="coerce")
+            if pd.notna(parsed_date) and parsed_date.date() == target_date_obj and campaign_value == campaign_name:
                 matching_rows.append(index + 2)
         logger.info(f"[Sheets] Found {len(matching_rows)} existing rows for '{campaign_name}' on {save_date}")
 
@@ -368,7 +370,8 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         for index in range(max_updated_len):
             date_value = updated_date_column[index][0] if index < len(updated_date_column) and updated_date_column[index] else ""
             campaign_value = updated_campaign_column[index][0] if index < len(updated_campaign_column) and updated_campaign_column[index] else ""
-            if date_value == save_date and campaign_value == campaign_name:
+            parsed_date = pd.to_datetime(date_value, dayfirst=True, errors="coerce")
+            if pd.notna(parsed_date) and parsed_date.date() == target_date_obj and campaign_value == campaign_name:
                 verified_count += 1
 
         if verified_count == len(new_rows):
@@ -491,6 +494,19 @@ def compute_and_store_total_data(target_date=None):
         if df_target.empty:
             logger.warning(f"No non-Total data found for {target_date} to aggregate")
             return
+
+        # Guard against duplicate rows from retries/reruns so totals remain consistent with historical logic.
+        df_target = df_target.groupby(
+            ["country", "campaign_name", "domain", "parsed_date"], as_index=False
+        ).agg(
+            {
+                "sov": "mean",
+                "appearances": "max",
+                "avg_v_rank": "mean",
+                "avg_h_rank": "mean",
+                "single_link": "max",
+            }
+        )
         
         grouped = df_target.groupby("country")
         for country, country_df in grouped:
