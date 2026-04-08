@@ -416,11 +416,6 @@ def get_historical_data(start_date, end_date, campaign_name):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 def get_total_historical_data(start_date, end_date, country):
-    cache_key = f"{country}_{start_date}_{end_date}"
-    if cache_key in historical_data_cache:
-        logger.info(f"Using cached historical data for {cache_key}")
-        return historical_data_cache[cache_key]
-
     try:
         worksheet = worksheet_cache["share_of_voice"]
         rate_limit()
@@ -450,7 +445,6 @@ def get_total_historical_data(start_date, end_date, country):
         df_metrics = df_metrics.swaplevel(axis=1).sort_index(axis=1)
         df_appearances = df_agg.pivot(index="domain", columns="date", values="appearances").fillna(0)
 
-        historical_data_cache[cache_key] = (df_sov, df_metrics, df_appearances)
         return df_sov, df_metrics, df_appearances
     except Exception as e:
         logger.error(f"Error in get_total_historical_data for country '{country}': {e}")
