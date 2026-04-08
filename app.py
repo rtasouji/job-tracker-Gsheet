@@ -60,6 +60,25 @@ last_request_time = 0
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "securepassword123")
 
+def parse_date_value(value):
+    text = str(value).strip()
+    # Parse ISO dates explicitly to avoid day-first misinterpretation (e.g., 2026-04-07 -> July 4th).
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        parsed = pd.to_datetime(text, format="%Y-%m-%d", errors="coerce")
+    else:
+        parsed = pd.to_datetime(text, dayfirst=True, errors="coerce")
+    return parsed.date() if pd.notna(parsed) else None
+
+def parse_date_series(values):
+    series = values.astype(str).str.strip()
+    iso_mask = series.str.match(r"^\d{4}-\d{2}-\d{2}$", na=False)
+
+    parsed_iso = pd.to_datetime(series.where(iso_mask), format="%Y-%m-%d", errors="coerce")
+    parsed_fallback = pd.to_datetime(series.where(~iso_mask), dayfirst=True, errors="coerce")
+
+    parsed = parsed_iso.where(iso_mask, parsed_fallback)
+    return parsed.dt.date
+
 def rate_limit():
     global last_request_time
     current_time = time.time()
@@ -319,7 +338,7 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
             ])
         logger.info(f"New rows to add: {len(new_rows)}")
 
-        target_date_obj = pd.to_datetime(save_date, dayfirst=True).date()
+        target_date_obj = parse_date_value(save_date)
         rate_limit()
         date_column = worksheet.get("B2:B")
         campaign_column = worksheet.get("G2:G")
@@ -328,8 +347,8 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         for index in range(max_len):
             date_value = date_column[index][0] if index < len(date_column) and date_column[index] else ""
             campaign_value = campaign_column[index][0] if index < len(campaign_column) and campaign_column[index] else ""
-            parsed_date = pd.to_datetime(date_value, dayfirst=True, errors="coerce")
-            if pd.notna(parsed_date) and parsed_date.date() == target_date_obj and campaign_value == campaign_name:
+            parsed_date = parse_date_value(date_value)
+            if parsed_date == target_date_obj and campaign_value == campaign_name:
                 matching_rows.append(index + 2)
         logger.info(f"Found {len(matching_rows)} existing rows for '{campaign_name}' on {save_date}")
 
@@ -365,8 +384,8 @@ def save_to_db(sov_data, appearances, avg_v_rank, avg_h_rank, single_link, campa
         for index in range(max_updated_len):
             date_value = updated_date_column[index][0] if index < len(updated_date_column) and updated_date_column[index] else ""
             campaign_value = updated_campaign_column[index][0] if index < len(updated_campaign_column) and updated_campaign_column[index] else ""
-            parsed_date = pd.to_datetime(date_value, dayfirst=True, errors="coerce")
-            if pd.notna(parsed_date) and parsed_date.date() == target_date_obj and campaign_value == campaign_name:
+            parsed_date = parse_date_value(date_value)
+            if parsed_date == target_date_obj and campaign_value == campaign_name:
                 verified_count += 1
 
         if verified_count == len(new_rows):
@@ -387,10 +406,7 @@ def get_historical_data(start_date, end_date, campaign_name):
             df["single_link"] = 0
         
         df = df[df["campaign_name"] == campaign_name]
-        try:
-            df["date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
-        except Exception:
-            df["date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
+        df["date"] = parse_date_series(df["date"])
         df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
         
         if df.empty:
@@ -423,10 +439,7 @@ def get_total_historical_data(start_date, end_date, country):
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         
         df = df[(df["campaign_name"] == f"Total - {country}") & (df["country"] == country)]
-        try:
-            df["date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
-        except Exception:
-            df["date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
+        df["date"] = parse_date_series(df["date"])
         df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
         
         if df.empty:
@@ -462,10 +475,7 @@ def compute_and_store_total_data(target_date=None):
         df = pd.DataFrame(data, columns=["domain", "date", "sov", "appearances", "avg_v_rank", "avg_h_rank", "campaign_name", "country", "single_link"])
         
         # Robust date parsing
-        try:
-            df["parsed_date"] = pd.to_datetime(df["date"], format="mixed", dayfirst=True).dt.date
-        except Exception:
-            df["parsed_date"] = pd.to_datetime(df["date"], dayfirst=True).dt.date
+        df["parsed_date"] = parse_date_series(df["date"])
             
         if target_date is None:
             target_date = datetime.date.today()
